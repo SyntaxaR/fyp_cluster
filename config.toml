@@ -1,0 +1,19 @@
+# Configuration file for the project
+
+[project]
+name = "fyp_cluster"
+wifi_ssid = "ClusterNet"
+wifi_password = "Password"
+
+[controller]
+ap_enabled = true
+control_port = 8001
+
+[worker]
+control_port = 8001
+data_port = 8002
+control_interface = "eth0"
+ethernet_interface = "eth0"
+ethernet_subnet = "10.0.100"
+wifi_interface = "wlan0"
+wifi_subnet = "10.0.200"
