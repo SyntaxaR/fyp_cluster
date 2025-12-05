@@ -4,6 +4,7 @@ import logging
 from time import sleep
 from pathlib import Path
 import subprocess
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -35,29 +36,42 @@ class ControllerNetworkManager(NetworkManager):
         self.run_command(['sudo', 'systemctl', 'stop', 'dnsmasq'], check=False)
         self.run_command(['sudo', 'systemctl', 'stop', 'hostapd'], check=False)
 
+        # Kill any existing dnsmasq/hostapd processes
+        self.run_command(['sudo', 'pkill', 'dnsmasq'], check=False)
+        self.run_command(['sudo', 'pkill', 'hostapd'], check=False)
+
         logger.info("Configuring DNSMASQ for DHCP server on wifi interface only...")
         logger.info(f"Writing DNSMASQ configuration to /tmp/dnsmasq-controller.conf, wifi: True, eth: False")
         self.dnsmasq_conf_file.write_text(self._generate_dnsmasq_dhcp_config(include_wifi=True, include_eth=False))
         self._configure_wifi_ap()
 
+        print("Launching DNSMASQ...")
         # Launch DNSMASQ
         try:
             self._start_dnsmasq()
         except Exception as e:
             logger.error(f"Failed to start DNSMASQ service: {e}")
             raise RuntimeError(f"Failed to start DNSMASQ service: {e}")
+        
+        print("Initialization complete (TESTING CONFIGURATION!!!).")
 
     def initialize(self, initialize_wifi: bool = False):
         logger.info("Initializing controller network...")
-
+        
+        print("Initializing controller network...")
+        print("Clearing existing network services...")
         # Disable DNSMASQ & Hostapd if running
         self.run_command(['sudo', 'systemctl', 'stop', 'dnsmasq'], check=False)
         self.run_command(['sudo', 'systemctl', 'stop', 'hostapd'], check=False)
 
+        # Kill any existing dnsmasq/hostapd processes
+        self.run_command(['sudo', 'pkill', 'dnsmasq'], check=False)
+        self.run_command(['sudo', 'pkill', 'hostapd'], check=False)
+
         # Check if ethernet interface is connected
         count = 1
         while self._check_interface_status(self.ethernet_interface) == InterfaceStatus.UNAVAILABLE:
-            logger.warning(f"Ethernet interface {self.ethernet_interface} is unavailable, please check your ethernet cable. Retrying in 5 seconds... (Retry: {count}/5)")
+            logger.warning(f"Ethernet interface {self.ethernet_interface} is unavailable, please check the ethernet cable/interface. Retrying in 5 seconds... (Retry: {count}/5)")
             sleep(5)
             count += 1
             if count > 5:
@@ -77,13 +91,17 @@ class ControllerNetworkManager(NetworkManager):
             self._configure_wifi_ap()            
 
         # Launch DNSMASQ
+        print("Launching DNSMASQ...")
         try:
             self._start_dnsmasq()
         except Exception as e:
             logger.error(f"Failed to start DNSMASQ service: {e}")
             raise RuntimeError(f"Failed to start DNSMASQ service: {e}")
         
+        print("Initialization complete.")
+        
     def _start_hostapd(self):
+        print("Launching Hostapd...")
         logger.info("Starting Hostapd service...")
         if self.hostapd_process:
             logger.info("Hostapd service is already running when attempting to start it again!")
@@ -93,8 +111,9 @@ class ControllerNetworkManager(NetworkManager):
         if self.hostapd_process.poll() is not None:
             stderr = self.hostapd_process.stderr.read()
             logger.error(f"Hostapd service failed to start:\n{stderr}")
-            raise ConnectionError(f"Hostapd service failed to start: {stderr}")
+            raise RuntimeError(f"Hostapd service failed to start: {stderr}")
         logger.info(f"Hostapd service started successfully, pid: {self.hostapd_process.pid}")
+        self._monitor_process(self.hostapd_process, "hostapd")
 
     def _start_dnsmasq(self):
         logger.info("Starting DNSMASQ service...")
@@ -108,8 +127,34 @@ class ControllerNetworkManager(NetworkManager):
             logger.error(f"DNSMASQ service failed to start:\n{stderr}")
             raise ConnectionError(f"DNSMASQ service failed to start: {stderr}")
         logger.info(f"DNSMASQ service started successfully, pid: {self.dnsmasq_process.pid}")
+        self._monitor_process(self.dnsmasq_process, "dnsmasq")
+
+    def _monitor_process(self, process: subprocess.Popen, name: str):
+        def read_output(pipe, prefix):
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        logger.debug(f"[{prefix}] {line.strip()}")
+            except Exception as e:
+                logger.warning(f"Error reading {prefix} output: {e}")
+        if process.stdout:
+            stdout_thread = threading.Thread(target=read_output, args=(process.stdout, f"{name}--stdout"), daemon=True)
+            stdout_thread.start()
+        if process.stderr:
+            stderr_thread = threading.Thread(target=read_output, args=(process.stderr, f"{name}--stderr"), daemon=True)
+            stderr_thread.start()
+
+    def _check_subprocess_health(self) -> bool:
+        if self.dnsmasq_process and self.dnsmasq_process.poll() is not None:
+            logger.error("DNSMASQ process has terminated unexpectedly")
+            return False
+        if self.hostapd_process and self.hostapd_process.poll() is not None:
+            logger.error("Hostapd process has terminated unexpectedly")
+            return False
+        return True
 
     def _configure_ethernet_static_ip(self):
+        print(f"Configuring Ethernet interface {self.ethernet_interface} to static IP {self.eth_ipv4}...")
         logger.info(f"Configuring {self.ethernet_interface} to static IP {self.eth_ipv4}...")
         # Get all NetworkManager connections with the interface
         connection = self.run_command(['nmcli', '-g', 'GENERAL.CONNECTION', 'device', 'show', self.ethernet_interface])
@@ -168,11 +213,7 @@ class ControllerNetworkManager(NetworkManager):
         logger.info(f"Setting up Hostapd to create wifi AP on interface {self.wifi_interface}...")
         self.hostapd_conf_file.write_text(self._generate_hostapd_config())
         logger.info("Starting Hostapd service for wifi AP...")
-        try:
-            self._start_hostapd()
-        except Exception as e:
-            logger.error(f"Failed to start hostapd: {e}")
-            raise RuntimeError(f"Failed to start hostapd: {e}")
+        self._start_hostapd()
 
     def _generate_dnsmasq_dhcp_config(self, include_wifi: bool, include_eth: bool=True) -> str:
         if not include_eth and not include_wifi:
@@ -227,9 +268,8 @@ ignore_broadcast_ssid=0
 macaddr_acl=0
 rsn_pairwise=CCMP
 hw_mode=a
-channel=0
-ieee80211d=1
-ieee80211n=1
+channel=40
+ieee80211n=0
 ieee80211ac=1
 wmm_enabled=1
 """

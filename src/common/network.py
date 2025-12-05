@@ -2,7 +2,7 @@ import logging
 import subprocess
 from time import sleep
 from dataclasses import dataclass
-from model import InterfaceStatus
+from common.model import InterfaceStatus
 
 logger = logging.getLogger(__name__)
 

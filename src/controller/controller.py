@@ -6,6 +6,8 @@ import time
 from controller.network_manager import ControllerNetworkManager
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(filename='controller.log', level=logging.DEBUG,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 app = FastAPI(title="Controller API")
 
@@ -36,5 +38,11 @@ def receive_heartbeat(heartbeat: WorkerHeartbeat):
 if __name__ == "__main__":
     config = load_config()
     network_manager = ControllerNetworkManager(config)
-    #FOR TESTING ONLY
-    network_manager.initialize_test_wifi()
+    # FOR TESTING ONLY
+    network_manager.initialize(initialize_wifi=True)
+    # Hold the process
+    while True:
+        time.sleep(5)
+        if not network_manager._check_subprocess_health():
+            logger.error("One or more network subprocesses have terminated unexpectedly. Exiting controller...")
+            break

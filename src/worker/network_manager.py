@@ -43,7 +43,6 @@ class WorkerNetworkController(NetworkManager):
         # Configure Ethernet interface to use DHCP
         self._ethernet_use_dhcp(self.ethernet_interface)
 
-
         # Configure Ethernet Interface to use DHCP
         
 
@@ -62,7 +61,7 @@ class WorkerNetworkController(NetworkManager):
                 logger.error(f"Interface {interface} is not in 'disconnected' state, cannot proceed to set DHCP")
                 raise OSError(f"Interface {interface} is not 'disconnected' after deleting all NetworkManager connections")
         # Create new DHCP connection
-        self.run_command(['nmcli', 'connection', 'add', 'type', 'ethernet', 'ifname', interface, 'con-name', f'{interface}-worker-dhcp', 'ipv4.method', 'auto'])
+        self.run_command(['nmcli', 'connection', 'add', 'type', 'ethernet', 'ifname', interface, 'con-name', f'{interface}-worker-dhcp', 'ipv4.method', 'auto', 'ipv6.method', 'disable'])
         self.run_command(['nmcli', 'connection', 'up', f'{interface}-worker-dhcp'])
 
 

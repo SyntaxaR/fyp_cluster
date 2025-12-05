@@ -1,7 +1,7 @@
 import logging
 import os
 from common.config import load_config
-from network_manager import WorkerNetworkController, WorkerNetworkMode
+from worker.network_manager import WorkerNetworkController, WorkerNetworkMode
 from common.network import WorkerNetworkMode
 from common.model import generate_identifier, WorkerIdAssignmentRequest, WorkerNetworkModeRequest
 import time
@@ -12,6 +12,8 @@ import requests
 import threading
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(filename='worker.log', level=logging.DEBUG,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 class Worker:
     def __init__(self, config: dict[str, any]):

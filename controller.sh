@@ -1,9 +1,12 @@
-# Check $POETRY_HOME and set PATH: $HOME/.local/bin if no
+# Add project path to PYTHONPATH
+export PYTHONPATH="$(pwd)/src:$PYTHONPATH"
+
+# Check $POETRY_HOME and set PATH: $HOME/.local/share/pypoetry/bin if no
 if [ -z "$POETRY_HOME" ]; then
     export POETRY_HOME="$HOME/.local/share/pypoetry"
     export PATH="$POETRY_HOME/bin:$PATH"
 else
-    export PATH="$HOME/.local/bin:$PATH"
+    export PATH="$POETRY_HOME/bin:$PATH"
 fi
 
 # Check Poetry installation
@@ -25,7 +28,7 @@ if ! command -v poetry &> /dev/null; then
 fi
 
 # Install dependencies
-poetry install
+sudo env "PATH=$PATH" "PYTHONPATH=$PYTHONPATH" poetry install
 
 # Run controller
-poetry run python ./src/controller/controller.py
+sudo env "PATH=$PATH" "PYTHONPATH=$PYTHONPATH" poetry run python -m controller.controller
