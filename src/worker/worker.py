@@ -1,10 +1,9 @@
 import logging
-import hashlib
 import os
 from common.config import load_config
 from network_manager import WorkerNetworkController, WorkerNetworkMode
 from common.network import WorkerNetworkMode
-from common.model import ADJECTIVES, ANIMALS, WorkerIdAssignmentRequest, WorkerNetworkModeRequest
+from common.model import generate_identifier, WorkerIdAssignmentRequest, WorkerNetworkModeRequest
 import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -93,7 +92,7 @@ class Worker:
         # Get hardware serial and generate identifier
         self.hardware_serial = self._get_cpu_serial()
         logger.info(f"Worker Hardware Serial: {self.hardware_serial}")
-        self.hardware_identifier = self._generate_identifier(self.hardware_serial)
+        self.hardware_identifier = generate_identifier(self.hardware_serial)
         logger.info(f"Worker Hardware Identifier: {self.hardware_identifier}")
 
         # Start FastAPI server
@@ -201,14 +200,6 @@ class Worker:
         except subprocess.CalledProcessError:
             logger.info(f"Error pinging IP address: {ip_address}, assuming conflict")
             return True
-
-    def _generate_identifier(serial: str) -> str:
-        # Generate user-friendly identifier from the hardware serial
-        hash_obj = hashlib.md5(serial.encode())
-        hash_bytes = hash_obj.digest()
-        adj_index = int.from_bytes(hash_bytes[:4]) % len(ADJECTIVES)
-        animal_index = int.from_bytes(hash_bytes[4:8]) % len(ANIMALS)
-        return f"{ADJECTIVES[adj_index]}-{ANIMALS[animal_index]}"
 
     def _get_cpu_serial(self) -> str:
         try:
