@@ -23,9 +23,30 @@ class ControllerNetworkManager(NetworkManager):
         self.control_port = self.config['worker']['control_port']
         self.data_port = self.config['worker']['data_port']
 
+        self.dnsmasq_process = None
+        self.hostapd_process = None
+
         self.dnsmasq_conf_file = Path('/tmp/dnsmasq-controller.conf')
         self.hostapd_conf_file = Path('/tmp/hostapd-controller.conf')
     
+    def initialize_test_wifi(self):
+        logger.info("#TESTING ONLY# Initializing controller network with only wifi AP...")
+        # Disable DNSMASQ & Hostapd if running
+        self.run_command(['sudo', 'systemctl', 'stop', 'dnsmasq'], check=False)
+        self.run_command(['sudo', 'systemctl', 'stop', 'hostapd'], check=False)
+
+        logger.info("Configuring DNSMASQ for DHCP server on wifi interface only...")
+        logger.info(f"Writing DNSMASQ configuration to /tmp/dnsmasq-controller.conf, wifi: True, eth: False")
+        self.dnsmasq_conf_file.write_text(self._generate_dnsmasq_dhcp_config(include_wifi=True, include_eth=False))
+        self._configure_wifi_ap()
+
+        # Launch DNSMASQ
+        try:
+            self._start_dnsmasq()
+        except Exception as e:
+            logger.error(f"Failed to start DNSMASQ service: {e}")
+            raise RuntimeError(f"Failed to start DNSMASQ service: {e}")
+
     def initialize(self, initialize_wifi: bool = False):
         logger.info("Initializing controller network...")
 
@@ -46,31 +67,47 @@ class ControllerNetworkManager(NetworkManager):
         # Get ready to setup DHCP server on ethernet interface
         # Set ethernet interface to static IP
         self._configure_ethernet_static_ip()
-
-        # Delete existing DNSMASQ configuration files
-        dnsmasq_conf_dir = Path('/etc/dnsmasq.d')
-        dnsmasq_conf_dir.mkdir(parents=True, exist_ok=True)
-        for conf_file in dnsmasq_conf_dir.glob('*.conf'):
-            logger.info(f"Deleting existing DNSMASQ configuration file: {conf_file}")
-            conf_file.unlink()
         
         # Configure and start DNSMASQ for DHCP server on ethernet interface
         logger.info("Configuring DNSMASQ for DHCP server on ethernet interface...")
-        logger.info(f"Writing DNSMASQ configuration for ethernet interface: {dnsmasq_conf_dir}/controller-ethernet-dhcp.conf")
-        dnsmasq_eth_conf = dnsmasq_conf_dir / 'controller-ethernet-dhcp.conf'
-        dnsmasq_eth_conf.write_text(self._generate_dnsmasq_ethernet_dhcp_config())
+        logger.info(f"Writing DNSMASQ configuration to /tmp/dnsmasq-controller.conf, wifi: {initialize_wifi}")
+        self.dnsmasq_conf_file.write_text(self._generate_dnsmasq_dhcp_config(initialize_wifi))
 
         if initialize_wifi:
-            # Configure DNSMASQ for DHCP server on wifi interface
-            logger.info("Configuring DNSMASQ for DHCP server on wifi interface...")
-            dnsmasq_wifi_conf = dnsmasq_conf_dir / 'controller-wifi-dhcp.conf'
-            dnsmasq_wifi_conf.write_text(self._generate_dnsmasq_wifi_dhcp_config())
+            self._configure_wifi_ap()            
+
+        # Launch DNSMASQ
+        try:
+            self._start_dnsmasq()
+        except Exception as e:
+            logger.error(f"Failed to start DNSMASQ service: {e}")
+            raise RuntimeError(f"Failed to start DNSMASQ service: {e}")
         
-        # Start DNSMASQ service
+    def _start_hostapd(self):
+        logger.info("Starting Hostapd service...")
+        if self.hostapd_process:
+            logger.info("Hostapd service is already running when attempting to start it again!")
+            raise RuntimeError("Hostapd service is already running when attempting to start it again!")
+        self.hostapd_process = subprocess.Popen(['sudo', 'hostapd', '/tmp/hostapd-controller.conf'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        sleep(2) # Wait for service to start
+        if self.hostapd_process.poll() is not None:
+            stderr = self.hostapd_process.stderr.read()
+            logger.error(f"Hostapd service failed to start:\n{stderr}")
+            raise ConnectionError(f"Hostapd service failed to start: {stderr}")
+        logger.info(f"Hostapd service started successfully, pid: {self.hostapd_process.pid}")
 
-
+    def _start_dnsmasq(self):
         logger.info("Starting DNSMASQ service...")
-        
+        if self.dnsmasq_process:
+            logger.info("DNSMASQ service is already running when attempting to start it again!")
+            raise RuntimeError("DNSMASQ service is already running when attempting to start it again!")
+        self.dnsmasq_process = subprocess.Popen(['sudo', 'dnsmasq', '--no-daemon', '--conf-file=/tmp/dnsmasq-controller.conf', '--log-facility=-'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        sleep(2) # Wait for service to start
+        if self.dnsmasq_process.poll() is not None:
+            stderr = self.dnsmasq_process.stderr.read()
+            logger.error(f"DNSMASQ service failed to start:\n{stderr}")
+            raise ConnectionError(f"DNSMASQ service failed to start: {stderr}")
+        logger.info(f"DNSMASQ service started successfully, pid: {self.dnsmasq_process.pid}")
 
     def _configure_ethernet_static_ip(self):
         logger.info(f"Configuring {self.ethernet_interface} to static IP {self.eth_ipv4}...")
@@ -129,37 +166,54 @@ class ControllerNetworkManager(NetworkManager):
 
         # Use hostapd to create wifi AP
         logger.info(f"Setting up Hostapd to create wifi AP on interface {self.wifi_interface}...")
-        hostapd_conf_dir = Path('/etc/hostapd')
-        logger.info(f"Writing Hostapd configuration for wifi interface: {hostapd_conf_dir}/hostapd.conf")
-        hostapd_conf_dir.mkdir(parents=True, exist_ok=True)
-        hostapd_conf = hostapd_conf_dir / 'hostapd.conf'
-        hostapd_conf.write_text(self._generate_hostapd_config())
-        self.run_command(['sudo', 'systemctl', 'start', 'hostapd'])
+        self.hostapd_conf_file.write_text(self._generate_hostapd_config())
+        logger.info("Starting Hostapd service for wifi AP...")
+        try:
+            self._start_hostapd()
+        except Exception as e:
+            logger.error(f"Failed to start hostapd: {e}")
+            raise RuntimeError(f"Failed to start hostapd: {e}")
 
-        
+    def _generate_dnsmasq_dhcp_config(self, include_wifi: bool, include_eth: bool=True) -> str:
+        if not include_eth and not include_wifi:
+            raise ValueError("At least one of include_eth or include_wifi must be True to generate DNSMASQ configuration")
+        config_text = f"""
+# AUTO-GENERATED TEMPORARY CONFIGURATION FILE
 
-    def _generate_dnsmasq_ethernet_dhcp_config(self) -> str:
-        return f"""
+# BASIC SETTINGS
+domain-needed
+bogus-priv
+no-resolv
+no-poll
+bind-interfaces
+
+# Lease file location
+dhcp-leasefile=/tmp/dnsmasq-controller.leases
+
+# Logging
+log-dhcp
+log-queries
+"""
+        if include_eth:
+            config_text += f"""
+# {self.ethernet_interface}: Ethernet DHCP Configuration, static IP managed by NetworkManager
 interface={self.ethernet_interface}
-bind-interfaces
-dhcp-range={self.config['network']['ethernet_subnet']}2,{self.config['network']['ethernet_subnet']}254,24h
-# Subnet Mask
-dhcp-option=1,255.255.255.0
-# Gateway
-dhcp-option=3,{self.ethernet_gateway}
+dhcp-range=interface:{self.ethernet_interface},{self.config['network']['ethernet_subnet']}5,{self.config['network']['ethernet_subnet']}254,24h
+dhcp-option=interface:{self.ethernet_interface},1,255.255.255.0
+dhcp-option=interface:{self.ethernet_interface},3,{self.ethernet_gateway}
+dhcp-option=interface:{self.ethernet_interface},6,{self.ethernet_gateway}
 """
-    
-    def _generate_dnsmasq_wifi_dhcp_config(self) -> str:
-        return f"""
+        if include_wifi:
+            config_text += f"""
+# {self.wifi_interface}: WiFi DHCP Configuration, static IP managed by ip command
 interface={self.wifi_interface}
-bind-interfaces
-dhcp-range={self.config['network']['wifi_subnet']}2,{self.config['network']['wifi_subnet']}254,24h
-# Subnet Mask
-dhcp-option=1,255.255.255.0
-# Gateway
-dhcp-option=3,{self.wifi_gateway}
+dhcp-range=interface:{self.wifi_interface},{self.config['network']['wifi_subnet']}5,{self.config['network']['wifi_subnet']}254,24h
+dhcp-option=interface:{self.wifi_interface},1,255.255.255.0
+dhcp-option=interface:{self.wifi_interface},3,{self.wifi_gateway}
+dhcp-option=interface:{self.wifi_interface},6,{self.wifi_gateway}
 """
-    
+        return config_text
+
     def _generate_hostapd_config(self) -> str:
         return f"""
 interface={self.wifi_interface}

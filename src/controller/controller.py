@@ -1,8 +1,9 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
 from common.model import WorkerHeartbeat, WorkerRegistration
+from common.config import load_config
 import logging
 import time
+from controller.network_manager import ControllerNetworkManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,3 +32,9 @@ def receive_heartbeat(heartbeat: WorkerHeartbeat):
             status="active"
         )
         logger.info(f"Worker ID {heartbeat.worker_id} status updated")
+
+if __name__ == "__main__":
+    config = load_config()
+    network_manager = ControllerNetworkManager(config)
+    #FOR TESTING ONLY
+    network_manager.initialize_test_wifi()
