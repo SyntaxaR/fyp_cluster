@@ -165,9 +165,10 @@ class ControllerNetworkManager(NetworkManager):
         # Verify if interface is disconnected
         if self._check_interface_status(self.ethernet_interface) != InterfaceStatus.DISCONNECTED:
             sleep(2)
-            if self._check_interface_status(self.ethernet_interface) != InterfaceStatus.DISCONNECTED:
-                logger.error(f"Interface {self.ethernet_interface} is not in 'disconnected' state, cannot proceed to set DHCP")
-                raise OSError(f"Interface {self.ethernet_interface} is not 'disconnected' after deleting all NetworkManager connections")
+            check_status = self._check_interface_status(self.ethernet_interface)
+            if check_status != InterfaceStatus.DISCONNECTED:
+                logger.error(f"Interface {self.ethernet_interface} is not in 'disconnected' ({check_status} instead) state, cannot proceed to set DHCP")
+                raise OSError(f"Interface {self.ethernet_interface} is not 'disconnected' ({check_status} instead) after deleting all NetworkManager connections")
         # Create new static IP connection
         self.run_command(['nmcli', 'connection', 'add', 'type', 'ethernet', 'ifname', self.ethernet_interface, 'con-name', f'{self.ethernet_interface}-controller-static', 'ipv4.method', 'manual', 'ipv4.addresses', f'{self.eth_ipv4}/24', 'ipv4.gateway', "", 'ipv4.dns', "", 'ipv6.method', 'disable'])
         self.run_command(['nmcli', 'connection', 'up', f'{self.ethernet_interface}-controller-static'])

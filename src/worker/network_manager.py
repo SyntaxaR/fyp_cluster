@@ -1,9 +1,7 @@
-from enum import Enum
 from common.network import NetworkManager
 from common.model import WorkerHeartbeat, WorkerNetworkMode, InterfaceStatus
 import logging
-import re
-from time import sleep
+from time import sleep, time
 import requests
 
 logger = logging.getLogger(__name__)
@@ -20,13 +18,15 @@ class WorkerNetworkController(NetworkManager):
             raise ValueError("worker_id must be between 0 and 254 or -1 (Unassigned)")
 
         self.ethernet_interface = self.config['worker']['ethernet_interface']
-        self.wifi_interface = self.config['controller']['wifi_interface']
-        self.ethernet_gateway = f"{self.config['controller']['ethernet_subnet']}1"
-        self.wifi_gateway = f"{self.config['network']['wifi_subnet']}1"
+        self.wifi_interface = self.config['worker']['wifi_interface']
         self.eth_controller_ipv4 = f"{self.config['network']['ethernet_subnet']}1"
         self.wifi_controller_ipv4 = f"{self.config['network']['wifi_subnet']}1"
         self.control_port = self.config['controller']['control_port']
         self.data_port = self.config['controller']['data_port']
+
+        self.eth_ipv4 = None
+        self.wifi_ipv4 = None
+        self.current_mode: WorkerNetworkMode = WorkerNetworkMode.UNASSIGNED
 
     def initialize(self):
         logger.info("Initializing worker network...")
@@ -42,9 +42,6 @@ class WorkerNetworkController(NetworkManager):
                 raise ConnectionError("Ethernet interface connection failed")   
         # Configure Ethernet interface to use DHCP
         self._ethernet_use_dhcp(self.ethernet_interface)
-
-        # Configure Ethernet Interface to use DHCP
-        
 
     def _ethernet_use_dhcp(self, interface: str):
         logger.info(f"Configuring {interface} to use DHCP...")
@@ -63,6 +60,29 @@ class WorkerNetworkController(NetworkManager):
         # Create new DHCP connection
         self.run_command(['nmcli', 'connection', 'add', 'type', 'ethernet', 'ifname', interface, 'con-name', f'{interface}-worker-dhcp', 'ipv4.method', 'auto', 'ipv6.method', 'disable'])
         self.run_command(['nmcli', 'connection', 'up', f'{interface}-worker-dhcp'])
+        self.eth_ipv4 = self._wait_for_eth_dhcp_ip()
+    
+    def _wait_for_eth_dhcp_ip(self) -> str:
+        logger.info("Waiting for DHCP to assign Ethernet IP address...")
+        print("Waiting for DHCP to assign Ethernet IP address...")
+        start_time = time()
+        timeout = 30 # Seconds waiting for DHCP assignment
+        while time() - start_time < timeout:
+            result = self.run_command(['ip', '-4', 'addr', 'show', self.ethernet_interface])
+            ip_address = None
+            for line in result.splitlines():
+                if 'inet ' in line:
+                    ip_address = line.strip().split(' ')[1].split('/')[0]
+                    break
+            if ip_address:
+                logger.info(f"Assigned IP address: {ip_address}")
+                print(f"Assigned Control Plane Ethernet IP address: {ip_address}")
+                if ip_address.find(self.config['network']['ethernet_subnet']) == 0:
+                    logger.info("DHCP assigned IP is within expected subnet")
+                    return ip_address
+                logger.warning(f"DHCP assigned IP {ip_address} is outside expected subnet {self.config['network']['ethernet_subnet']}")
+            sleep(3)
+        raise TimeoutError("Timed out waiting for DHCP to assign IP address")
 
 
     def _verify_data_connectivity(self) -> bool:
@@ -99,13 +119,17 @@ class WorkerNetworkController(NetworkManager):
 
     def _send_control_heartbeat(self, serial: str, hardware_identifier: str):
         logger.info("Sending heartbeat to controller...")
+        print(f"Sending heartbeat to controller... {time()}")
         heartbeat = WorkerHeartbeat(
             worker_id=self.worker_id,
             serial=serial,
             hardware_identifier=hardware_identifier,
-            control_ip_address=self.wifi_ipv4 if self.current_mode == WorkerNetworkMode.WIFI else self.eth_ipv4,
+            control_ip_address=self.eth_ipv4,
             data_connectivity=self._verify_data_connectivity(),
             data_ip_address=self.wifi_ipv4 if self.current_mode == WorkerNetworkMode.WIFI else self.eth_ipv4,
-            data_plane=WorkerNetworkMode.WIFI if self.current_mode == WorkerNetworkMode.WIFI else WorkerNetworkMode.ETHERNET,
+            data_plane=self.current_mode.value,
         )
         requests.post(f"http://{self.eth_controller_ipv4}:{self.control_port}/heartbeat", json=heartbeat.__dict__, timeout=5)
+    
+    def destroy(self):
+        print("TODO: Implement worker network cleanup")

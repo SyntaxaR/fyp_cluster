@@ -1,12 +1,11 @@
 import logging
 import os
 from common.config import load_config
-from worker.network_manager import WorkerNetworkController, WorkerNetworkMode
-from common.network import WorkerNetworkMode
-from common.model import generate_identifier, WorkerIdAssignmentRequest, WorkerNetworkModeRequest
+from common.util import get_cpu_serial, generate_identifier
+from worker.network_manager import WorkerNetworkController
+from common.model import WorkerIdAssignmentRequest, WorkerNetworkModeRequest, WorkerNetworkMode
 import time
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import uvicorn
 import requests
 import threading
@@ -29,8 +28,12 @@ class Worker:
         self._setup_fastapi_routes()
 
     def _setup_fastapi_routes(self):
+
         @self.app.post('/worker/assign_id')
         async def assign_worker_id(request: WorkerIdAssignmentRequest):
+            if request.hardware_serial != self.hardware_serial:
+                logger.error("Hardware serial number mismatch during Worker ID assignment")
+                raise HTTPException(status_code=400, detail="Hardware serial number mismatch")
             logger.info(f"Assigning new Worker ID: {self.worker_id}")
             try:
                 if self.worker_id < 0 or self.worker_id > 99:
@@ -52,6 +55,7 @@ class Worker:
             try:
                 if not self.network_controller:
                     raise HTTPException(status_code=400, detail="Network controller not initialized")
+                #TODO: Implement dataplane switching
                 if config.mode == WorkerNetworkMode.ETHERNET.value:
                     self.network_controller.use_ethernet_dataplane()
                 elif config.mode == WorkerNetworkMode.WIFI.value:
@@ -92,80 +96,35 @@ class Worker:
             self.initialized = True
     
         # Get hardware serial and generate identifier
-        self.hardware_serial = self._get_cpu_serial()
+        self.hardware_serial = get_cpu_serial(logger)
         logger.info(f"Worker Hardware Serial: {self.hardware_serial}")
         self.hardware_identifier = generate_identifier(self.hardware_serial)
         logger.info(f"Worker Hardware Identifier: {self.hardware_identifier}")
 
-        # Start FastAPI server
-        self.start_api_server()
+        
 
         # Get intial network setup via DHCP for cached Worker ID conflict checking / new Worker ID assignment
         logger.info("Using DHCP for initial network setup...")
-        eth_interface = self.config['worker']['ethernet_interface']
         self.network_controller = WorkerNetworkController(-1, self.config)
         self.network_controller.initialize() # DHCP on ethernet
 
-        # Wait for DHCP to assign IP
-        logger.info("Waiting for DHCP to assign IP address...")
-        dhcp_ip = self._wait_for_dhcp_ip()
-        logger.info(f"DHCP assigned IP address: {dhcp_ip}")
+        # Depreciated: Check for cached worker ID
+        # self.worker_id = self._load_cached_worker_id()
+        # logger.info("No valid cached Worker ID found")
 
-        # Check for cached worker ID
-        self.worker_id = self._load_cached_worker_id()
-        if self.worker_id != -1:
-            logger.info(f"Loaded cached Worker ID: {self.worker_id}")
-            self._handle_startup_with_cached_id()
-        else:
-            logger.info("No valid cached Worker ID found")
-            self._handle_startup_initial()
+        self._handle_startup()
+
+        # Start FastAPI server
+        self.start_api_server()
         
-    def _handle_startup_with_cached_id(self):
-        logger.info(f"Starting worker with cached ID {self.worker_id}...")
-        # Check static IP conflict with cached Worker ID
-        static_ip = f"{self.config['worker']['ethernet_subnet']}1{"0" if self.worker_id < 10 else ""}{self.worker_id}"
-        logger.info(f"Checking for IP conflict on static IP {static_ip}...")
-        if self._is_ip_conflict(static_ip):
-            logger.error(f"IP conflict detected for static IP {static_ip}. Cannot start worker with cached ID {self.worker_id}.")
-            self.worker_id = -1
-            self._handle_startup_initial()
-            return
-        else:
-            logger.info(f"No IP conflict detected for static IP {static_ip}. Proceeding with static configuration.")
-            assert self.network_controller is not None
-            self.network_controller.destroy()  # Clear DHCP config
-            self.stop_heartbeat.set()
-            self.network_controller = WorkerNetworkController(self.worker_id, self.config)
-            self.network_controller.initialize()
-            self._start_heartbeat_loop()
-            return
-    
-    def _handle_startup_initial(self):
+    def _handle_startup(self):
         logger.info("Starting worker without cached Worker ID...")
         
         # Start sending heartbeats to controller, waiting for Worker ID assignment
         self._start_heartbeat_loop()
 
-    def _wait_for_dhcp_ip(self) -> str:
-        start_time = time.time()
-        timeout = 60 # Seconds waiting for DHCP assignment
-        while time.time() - start_time < timeout:
-            result = self.network_controller.run_command(['sudo', 'ip', '-4', 'addr', 'show', self.network_controller.ethernet_interface])
-            ip_address = None
-            for line in result.splitlines():
-                if 'inet ' in line:
-                    ip_address = line.strip().split(' ')[1].split('/')[0]
-                    break
-            if ip_address:
-                logger.info(f"Assigned IP address: {ip_address}")
-                if ip_address.find(self.config['worker']['ethernet_subnet']) == 0:
-                    logger.info("DHCP assigned IP is within expected subnet")
-                    return ip_address
-                logger.warning(f"DHCP assigned IP {ip_address} is outside expected subnet {self.config['worker']['ethernet_subnet']}")
-            time.sleep(3)
-        raise TimeoutError("Timed out waiting for DHCP to assign IP address")
 
-    def _start_heartbeat_loop(self):
+    def _start_heartbeat_loop(self, interval: int = 15):
         self.stop_heartbeat.clear()
 
         def heartbeat_task():
@@ -173,17 +132,17 @@ class Worker:
                 try:
                     logger.info(f"Sending heartbeat to controller {time.time()}")
                     self.network_controller._send_control_heartbeat(self.hardware_serial, self.hardware_identifier)
-                    time.sleep(15)  # Send heartbeat every 30 seconds
+                    time.sleep(interval)
                 except requests.exceptions.ConnectionError:
                     logger.warning("Failed to connect to controller for heartbeat")
                 except Exception as e:
                     logger.error(f"Error sending heartbeat: {e}")
-                self.stop_heartbeat.wait(15)
+                self.stop_heartbeat.wait(interval)
             logger.info("Heartbeat loop stopped.")
         
         self.heartbeat_thread = threading.Thread(target=heartbeat_task, daemon=True)
         self.heartbeat_thread.start()
-        logger.info("Control heartbeat loop started with interval 15 seconds.")
+        logger.info(f"Control heartbeat loop started with interval {interval} seconds.")
 
     def _send_control_heartbeat(self):
         self.network_controller._send_control_heartbeat(self.hardware_serial, self.hardware_identifier)
@@ -203,73 +162,52 @@ class Worker:
             logger.info(f"Error pinging IP address: {ip_address}, assuming conflict")
             return True
 
-    def _get_cpu_serial(self) -> str:
-        try:
-            with open('/proc/cpuinfo', 'r') as f:
-                for line in f:
-                    if line.startswith('Serial'):
-                        return line.split(':')[1].strip()
-        except Exception as e:
-            logger.warning(f"Failed to read CPU serial number: {e}")
-            logger.warning("Use Ethernet MAC address instead as fallback")
-            return self._get_mac_address() 
-    
-    def _get_mac_address(self, interface: str) -> str:
-        try:
-            interface = self.config.get('worker', {}).get('ethernet_interface')
-            if not interface:
-                logger.warning("Ethernet interface not specified in config, defaulting to 'eth0'")
-                interface = 'eth0'
-            with open(f'/sys/class/net/{interface}/address', 'r') as f:
-                mac = f.read().strip().replace(":", "")
-                return mac
-        except Exception as e:
-            logger.error(f"Failed to read MAC address for interface {interface}: {e}")
-            raise e
-    
-    def _load_cached_worker_id(self) -> int:
-        cache_file = os.path.join(os.path.dirname(__file__), 'worker_id')
-        if not os.path.exists(cache_file):
-            return -1
-        try:
-            with open(cache_file, 'r') as f:
-                if f"{self.hardware_serial} " in f.read():
-                    f.seek(0)
-                    line = f.readline().strip()
-                    _, worker_id_str = line.split(' ')
-                    if int(worker_id_str) < 0 or int(worker_id_str) > 99:
-                        raise ValueError("Cached worker_id is out of valid range (0-99)")
-                    return int(worker_id_str)
-                else:
-                    return -1
-        except Exception as e:
-            logger.error(f"Failed to read cached worker ID: {e}")
-            return -1
 
-    def _cache_worker_id(self, worker_id: int):
-        cache_file = os.path.join(os.path.dirname(__file__), 'worker_id')
-        # Clear existing & write new cache
-        try:
-            with open(cache_file, 'w') as f:
-                f.write(f"{self.hardware_serial} {worker_id}\n")
-            logger.info(f"Cached Worker ID {worker_id} to {cache_file}")
-        except Exception as e:
-            logger.error(f"Failed to cache Worker ID: {e}")
+    
+    # def _load_cached_worker_id(self) -> int:
+    #     cache_file = os.path.join(os.path.dirname(__file__), 'worker_id')
+    #     if not os.path.exists(cache_file):
+    #         return -1
+    #     try:
+    #         with open(cache_file, 'r') as f:
+    #             if f"{self.hardware_serial} " in f.read():
+    #                 f.seek(0)
+    #                 line = f.readline().strip()
+    #                 _, worker_id_str = line.split(' ')
+    #                 if int(worker_id_str) < 0 or int(worker_id_str) > 99:
+    #                     raise ValueError("Cached worker_id is out of valid range (0-99)")
+    #                 return int(worker_id_str)
+    #             else:
+    #                 return -1
+    #     except Exception as e:
+    #         logger.error(f"Failed to read cached worker ID: {e}")
+    #         return -1
+    # 
+    # def _cache_worker_id(self, worker_id: int):
+    #     cache_file = os.path.join(os.path.dirname(__file__), 'worker_id')
+    #     # Clear existing & write new cache
+    #     try:
+    #         with open(cache_file, 'w') as f:
+    #             f.write(f"{self.hardware_serial} {worker_id}\n")
+    #         logger.info(f"Cached Worker ID {worker_id} to {cache_file}")
+    #     except Exception as e:
+    #         logger.error(f"Failed to cache Worker ID: {e}")
 
-    def _clear_cached_worker_id(self):
-        cache_file = os.path.join(os.path.dirname(__file__), 'worker_id')
-        try:
-            if os.path.exists(cache_file):
-                os.remove(cache_file)
-                logger.info("Cleared cached Worker ID")
-        except Exception as e:
-            logger.error(f"Failed to clear cached Worker ID: {e}")
+    # def _clear_cached_worker_id(self):
+    #     cache_file = os.path.join(os.path.dirname(__file__), 'worker_id')
+    #     try:
+    #         if os.path.exists(cache_file):
+    #             os.remove(cache_file)
+    #             logger.info("Cleared cached Worker ID")
+    #     except Exception as e:
+    #         logger.error(f"Failed to clear cached Worker ID: {e}")
     
 
 if __name__ == "__main__":
     config = load_config()
     worker = Worker(config)
     worker.intitialize()
+    print(f"Worker is running!\nHardware Serial: {worker.hardware_serial}\nIdentifier: {worker.hardware_identifier}")
 
     try:
         while True:

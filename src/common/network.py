@@ -44,14 +44,13 @@ class NetworkManager:
             device, state = line.split(':')
             if device == interface:
                 logger.info(f"Found interface status: {interface}:{state}")
-                sstate, _ = state.split(' ') if ' ' in state else (state, '')
-                if sstate == "connected":
+                if state.startswith("connected"):
                     return InterfaceStatus.CONNECTED
-                elif sstate == "disconnected":
+                elif state.startswith("disconnected"):
                     return InterfaceStatus.DISCONNECTED
-                elif sstate == "unavailable":
+                elif state.startswith("unavailable"):
                     return InterfaceStatus.UNAVAILABLE
-                elif sstate == "connecting":
+                elif state.startswith("connecting"):
                     return InterfaceStatus.CONNECTING
                 else:
                     raise ValueError(f"Unknown interface state: {state}")
