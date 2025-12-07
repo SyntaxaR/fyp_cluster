@@ -39,6 +39,7 @@ class InterfaceStatus(Enum):
 
 class WorkerStatus(Enum):
     PENDING_REGISTRATION = "pending_registration"
+    REGISTERED = "registered"
     ACTIVE = "active"
     RECONNECTING = "reconnecting"
     INACTIVE = "inactive"

@@ -22,7 +22,7 @@ class WorkersWebSocketManager:
         self.max_reconnect_attempts = 5 # maximum number of reconnection attempts before marking worker as disconnected
         self.connection_timeout = 5.0
 
-    async def _connect_to_worker(self, worker: WorkerControlInfo) -> bool:
+    async def connect_to_worker(self, worker: WorkerControlInfo) -> bool:
         ws_uri = f"ws://{worker.control_ip}:{self.ws_port}/worker_ws"
         logger.info(f"Attempting to establish WebSocket connection to {worker} at {ws_uri}...")
         try:
@@ -74,35 +74,39 @@ class WorkersWebSocketManager:
         else:
             logger.info(f"Not attempting reconnection to {worker} (max_reconnect_attempts set to 0)")
             await self._notify_status_change(worker, WorkerStatus.INACTIVE)
-        
+    
+    async def reconnect_worker(self, worker: WorkerControlInfo):
+        asyncio.create_task(self._reconnect_worker(worker))
+
     async def _reconnect_worker(self, worker: WorkerControlInfo):
         attempts = 0
         while attempts < self.max_reconnect_attempts:
             logger.info(f"Reconnection attempt {attempts + 1} for {worker}...")
-            success = await self._connect_to_worker(worker)
+            success = await self.connect_to_worker(worker)
             if success:
                 logger.info(f"Reconnected to {worker} successfully")
                 return
             attempts += 1
             await asyncio.sleep(self.reconnect_interval)
-        logger.error(f"Failed to reconnect to {worker} after {self.max_reconnect_attempts} attempts")
+        logger.error(f"Failed to reconnect to {worker} after {self.max_reconnect_attempts} attempts (max reached)")
         await self._notify_status_change(worker.worker_id, WorkerStatus.INACTIVE)
     
     async def _notify_status_change(self, worker: WorkerControlInfo, status: WorkerStatus):
         for callback in self.worker_status_change_callbacks:
             try:
-                await callback(worker, status)
+                await callback(worker.worker_id, status)
             except Exception as e:
                 logger.error(f"Error in worker status change callback for {worker}: {e}")
         
-    async def send_command(self, worker: WorkerControlInfo, command: dict) -> bool:
+    async def send_command(self, worker: WorkerControlInfo, command: str, data: dict[str, any]={}) -> bool:
         if worker.worker_id not in self.connections:
             logger.error(f"No active WebSocket connection to {worker} for sending command")
             return False
         ws = self.connections[worker.worker_id]
         try:
-            await ws.send(json.dumps(command))
-            logger.debug(f"Sent command to {worker}: {command}")
+            payload = json.dumps({"command": command, "data": data})
+            await ws.send(payload)
+            logger.debug(f"Sent command to {worker}: {payload}")
             return True
         except ConnectionClosed:
             logger.error(f"WebSocket connection to {worker} is closed, cannot send command")
@@ -129,6 +133,6 @@ class WorkersWebSocketManager:
         logger.info("Disconnected all WebSocket connections to workers")
 
     def register_status_change_callback(self, callback: callable):
-        # Callback signature: async def callback(worker: WorkerControlInfo | int, status: WorkerStatus)
+        # Callback signature: async def callback(worker: int, status: WorkerStatus)
         self.worker_status_change_callbacks.append(callback)
     

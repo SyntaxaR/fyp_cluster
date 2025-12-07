@@ -4,6 +4,7 @@ from common.config import load_config
 from common.util import get_cpu_serial, generate_identifier
 from worker.network_manager import WorkerNetworkController
 from common.model import WorkerIdAssignmentRequest, WorkerNetworkModeRequest, ConnectionType
+from worker.websocket_server import WorkerWebSocketServer
 import time
 from fastapi import FastAPI, WebSocket
 import uvicorn
@@ -13,6 +14,8 @@ import threading
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='worker.log', level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+heartbeat_interval = 5  # seconds
 
 # Control plane:
 # Controller -> Worker uses WebSocket for real-time commands
@@ -29,22 +32,25 @@ class Worker:
         self.initialized = False
 
         self.app = FastAPI()
+        self.ws_server = WorkerWebSocketServer(config)
         self._setup_fastapi_routes()
 
     def _setup_fastapi_routes(self):
         # WebSocket endpoint for real-time controller -> worker communication
         @self.app.websocket("/worker_ws")
-        async def worker_websocket_endpoint(websocket: WebSocket):
-            await websocket.accept()
-            try:
-                while True:
-                    data = await websocket.receive_text()
-                    logger.info(f"Received WebSocket message: {data}")
-                    await websocket.send_text(f"Echo: {data}")
-            except Exception as e:
-                logger.error(f"WebSocket connection error: {e}")
-            finally:
-                await websocket.close()
+        async def worker_handle_websocket(websocket: WebSocket):
+            await self.ws_server.handle_connection(websocket)
+        
+        async def handle_switch_to_ethernet(data: dict[str, any]):
+            logger.info("Received command to switch to Ethernet connection")
+            self.network_controller.switch_to_ethernet()
+        
+        async def handle_switch_to_wifi(data: dict[str, any]):
+            logger.info("Received command to switch to WiFi connection")
+            self.network_controller.switch_to_wifi(ssid=data.get('ssid'), password=data.get('password'))
+        
+        self.ws_server.register_handler('switch_to_ethernet', handle_switch_to_ethernet)
+        self.ws_server.register_handler('switch_to_wifi', handle_switch_to_wifi)
 
     def start_api_server(self):
         def run():
@@ -66,8 +72,6 @@ class Worker:
         self.hardware_identifier = generate_identifier(self.hardware_serial)
         logger.info(f"Worker Hardware Identifier: {self.hardware_identifier}")
 
-        
-
         # Get intial network setup via DHCP for cached Worker ID conflict checking / new Worker ID assignment
         logger.info("Using DHCP for initial network setup...")
         self.network_controller = WorkerNetworkController(-1, self.config)
@@ -84,12 +88,11 @@ class Worker:
         
     def _handle_startup(self):
         logger.info("Starting worker without cached Worker ID...")
-        
         # Start sending heartbeats to controller, waiting for Worker ID assignment
-        self._start_heartbeat_loop()
+        self._start_heartbeat_loop(heartbeat_interval)
 
 
-    def _start_heartbeat_loop(self, interval: int = 15):
+    def _start_heartbeat_loop(self, interval: int = 5):
         self.stop_heartbeat.clear()
 
         def heartbeat_task():
@@ -126,8 +129,6 @@ class Worker:
         except subprocess.CalledProcessError:
             logger.info(f"Error pinging IP address: {ip_address}, assuming conflict")
             return True
-
-
     
     # def _load_cached_worker_id(self) -> int:
     #     cache_file = os.path.join(os.path.dirname(__file__), 'worker_id')

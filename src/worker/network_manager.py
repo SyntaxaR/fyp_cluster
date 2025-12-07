@@ -42,6 +42,73 @@ class WorkerNetworkController(NetworkManager):
                 raise ConnectionError("Ethernet interface connection failed")   
         # Configure Ethernet interface to use DHCP
         self._ethernet_use_dhcp(self.ethernet_interface)
+        self.current_mode = ConnectionType.ETHERNET
+        print(f"Worker network initialized in {self.current_mode.value} mode")
+
+    def switch_to_ethernet(self):
+        if self.current_mode == ConnectionType.ETHERNET:
+            logger.info("Already in Ethernet mode, no switch needed")
+            print("Requested switch to Ethernet mode, but already in Ethernet mode")
+            return
+        elif self.current_mode == ConnectionType.WIFI:
+            logger.info("Switching to Ethernet connection mode...")
+            self.disable_wifi_interface(self.wifi_interface)
+        else:
+            raise RuntimeError("Cannot switch to Ethernet mode from invalid current network mode")
+        # Ethernet should already be configured via DHCP during initialization, just disable wifi
+        self.current_mode = ConnectionType.ETHERNET
+        self.wifi_ipv4 = None
+        logger.info("Switched to Ethernet connection mode")
+        print("Switched to Ethernet connection mode")
+    
+    def switch_to_wifi(self, ssid: str, password: str):
+        if self.current_mode == ConnectionType.WIFI:
+            logger.info("Already in WiFi mode, no switch needed")
+            print("Requested switch to WiFi mode, but already in WiFi mode")
+            return
+        logger.info("Switching to WiFi connection mode...")
+        # Enable and connect to WiFi
+        self.enable_wifi_interface(self.wifi_interface, ssid, password)
+        logger.info("Switched to WiFi connection mode")
+        print("Switched to WiFi connection mode")
+    
+    def enable_wifi_interface(self, interface: str, ssid: str, password: str):
+        logger.info(f"Enabling WiFi interface {interface} and connecting to SSID '{ssid}'...")
+        self.run_command(['nmcli', 'radio', 'wifi', 'on'])
+        sleep(3) # Wait for wifi scan to complete
+        # Connect to specified SSID
+        self.run_command(['nmcli', 'device', 'wifi', 'connect', ssid, 'password', password, 'ifname', interface])
+        sleep(3)
+        # Verify connection
+        status = self._check_interface_status(interface)
+        if status != InterfaceStatus.CONNECTED:
+            logger.error(f"Failed to connect WiFi interface {interface} to SSID '{ssid}'")
+            print(f"Failed to connect WiFi interface {interface} to SSID '{ssid}'")
+            raise ConnectionError(f"WiFi interface {interface} failed to connect to SSID '{ssid}'")
+        # Get assigned IP address
+        result = self.run_command(['ip', '-4', 'addr', 'show', self.wifi_interface])
+        ip_address = None
+        for line in result.splitlines():
+            if 'inet ' in line:
+                self.wifi_ipv4 = line.strip().split(' ')[1].split('/')[0]
+                break
+        if not ip_address:
+            logger.error(f"Failed to obtain IP address for WiFi interface {interface} after connection")
+            print(f"Failed to obtain IP address for WiFi interface {interface} after connection")
+            raise ConnectionError(f"WiFi interface {interface} has no assigned IP address after connection")
+        self.wifi_ipv4 = ip_address
+        self.current_mode = ConnectionType.WIFI
+        logger.info(f"WiFi interface {interface} connected with IP address {self.wifi_ipv4}")
+        print(f"WiFi interface {interface} connected with IP address {self.wifi_ipv4}")
+
+    def disable_wifi_interface(self, interface: str):
+        logger.info(f"Disabling WiFi interface {interface}...")
+        self.run_command(['nmcli', 'radio', 'wifi', 'off'])
+        sleep(2)
+        if self._check_interface_status(interface) != InterfaceStatus.DISCONNECTED:
+            logger.warning(f"WiFi interface {interface} is not disconnected after disabling WiFi radio")
+        logger.info("Switched to Ethernet connection mode")
+        print("Wifi interface disabled")
 
     def _ethernet_use_dhcp(self, interface: str):
         logger.info(f"Configuring {interface} to use DHCP...")
