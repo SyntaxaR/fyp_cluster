@@ -1,5 +1,5 @@
 from common.network import NetworkManager
-from common.model import WorkerHeartbeat, WorkerNetworkMode, InterfaceStatus
+from common.model import WorkerHeartbeat, ConnectionType, InterfaceStatus, ConnectivityTestResponse
 import logging
 from time import sleep, time
 import requests
@@ -26,7 +26,7 @@ class WorkerNetworkController(NetworkManager):
 
         self.eth_ipv4 = None
         self.wifi_ipv4 = None
-        self.current_mode: WorkerNetworkMode = WorkerNetworkMode.UNASSIGNED
+        self.current_mode: ConnectionType = ConnectionType.INVALID
 
     def initialize(self):
         logger.info("Initializing worker network...")
@@ -86,11 +86,11 @@ class WorkerNetworkController(NetworkManager):
 
 
     def _verify_data_connectivity(self) -> bool:
-        if self.current_mode != WorkerNetworkMode.WIFI and self.current_mode != WorkerNetworkMode.ETHERNET:
+        if self.current_mode != ConnectionType.WIFI and self.current_mode != ConnectionType.ETHERNET:
             logger.error("Unknown network mode for verifying data connectivity")
             return False
         logger.info(f"Verifying {self.current_mode.value} data plane connectivity to controller...")
-        target_ip = self.wifi_controller_ipv4 if self.current_mode == WorkerNetworkMode.WIFI else self.eth_controller_ipv4
+        target_ip = self.wifi_controller_ipv4 if self.current_mode == ConnectionType.WIFI else self.eth_controller_ipv4
         try:
             r = requests.get(f"http://{target_ip}:{self.data_port}/datatest")
             if r.status_code == 200:
@@ -102,16 +102,20 @@ class WorkerNetworkController(NetworkManager):
         except Exception as e:
             logger.error(f"Failed to verify connectivity to controller: {e}")
             return False
-        
+    
+    # async def connectivity_test(request: Request) -> ConnectivityTestResponse
     def _verify_control_connectivity(self) -> bool:
         logger.info("Verifying control plane connectivity to controller...")
         try:
-            r = requests.get(f"http://{self.eth_controller_ipv4}:{self.control_port}/test")
+            r = requests.get(f"http://{self.eth_controller_ipv4}:{self.control_port}/api/connectivity_test")
+            # Load response to ConnectivityTestResponse
             if r.status_code == 200:
-                logger.info("Control plane connectivity to controller verified successfully")
+                logger.info("Control connectivity got status 200, parsing response...")
+                response = ConnectivityTestResponse(**r.json())
+                logger.info(f'Connectivity to controller "{response.from_identifier}" verified successfully on {response.plane.value} plane')
                 return True
             else:
-                logger.error(f"Control plane connectivity verification failed, unexpected response code {r.status_code}")
+                logger.error(f"Control connectivity verification failed, unexpected response code {r.status_code}")
                 return False
         except Exception as e:
             logger.error(f"Failed to verify control plane connectivity to controller: {e}")
@@ -126,10 +130,11 @@ class WorkerNetworkController(NetworkManager):
             hardware_identifier=hardware_identifier,
             control_ip_address=self.eth_ipv4,
             data_connectivity=self._verify_data_connectivity(),
-            data_ip_address=self.wifi_ipv4 if self.current_mode == WorkerNetworkMode.WIFI else self.eth_ipv4,
-            data_plane=self.current_mode.value,
+            data_ip_address=self.wifi_ipv4 if self.current_mode == ConnectionType.WIFI else self.eth_ipv4,
+            data_plane=self.current_mode,
+            timestamp=int(time())
         )
-        requests.post(f"http://{self.eth_controller_ipv4}:{self.control_port}/heartbeat", json=heartbeat.__dict__, timeout=5)
+        requests.post(f"http://{self.eth_controller_ipv4}:{self.control_port}/api/heartbeat", json=heartbeat.__dict__, timeout=5)
     
     def destroy(self):
         print("TODO: Implement worker network cleanup")

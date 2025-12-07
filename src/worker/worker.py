@@ -3,9 +3,9 @@ import os
 from common.config import load_config
 from common.util import get_cpu_serial, generate_identifier
 from worker.network_manager import WorkerNetworkController
-from common.model import WorkerIdAssignmentRequest, WorkerNetworkModeRequest, WorkerNetworkMode
+from common.model import WorkerIdAssignmentRequest, WorkerNetworkModeRequest, ConnectionType
 import time
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, WebSocket
 import uvicorn
 import requests
 import threading
@@ -13,6 +13,10 @@ import threading
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='worker.log', level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Control plane:
+# Controller -> Worker uses WebSocket for real-time commands
+# Worker -> Controller uses HTTP REST API for heartbeats and status updates
 
 class Worker:
     def __init__(self, config: dict[str, any]):
@@ -28,58 +32,19 @@ class Worker:
         self._setup_fastapi_routes()
 
     def _setup_fastapi_routes(self):
-
-        @self.app.post('/worker/assign_id')
-        async def assign_worker_id(request: WorkerIdAssignmentRequest):
-            if request.hardware_serial != self.hardware_serial:
-                logger.error("Hardware serial number mismatch during Worker ID assignment")
-                raise HTTPException(status_code=400, detail="Hardware serial number mismatch")
-            logger.info(f"Assigning new Worker ID: {self.worker_id}")
+        # WebSocket endpoint for real-time controller -> worker communication
+        @self.app.websocket("/worker_ws")
+        async def worker_websocket_endpoint(websocket: WebSocket):
+            await websocket.accept()
             try:
-                if self.worker_id < 0 or self.worker_id > 99:
-                    raise HTTPException(status_code=400, detail="worker_id must be between 0 and 99")
-                self.stop_heartbeat.set()
-                self.worker_id = request.worker_id
-                if self.network_controller:
-                    self.network_controller.destroy()
-                self.network_controller = WorkerNetworkController(self.worker_id, self.config)
-                self.network_controller.initialize()
-                self._cache_worker_id(self.worker_id)
-                return {"status": "success", "worker_id": self.worker_id, "serial": self.hardware_serial, "identifier": self.hardware_identifier}
+                while True:
+                    data = await websocket.receive_text()
+                    logger.info(f"Received WebSocket message: {data}")
+                    await websocket.send_text(f"Echo: {data}")
             except Exception as e:
-                logger.error(f"Failed to assign Worker ID: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post('/worker/network_config')
-        async def update_network_config(config: WorkerNetworkModeRequest):
-            try:
-                if not self.network_controller:
-                    raise HTTPException(status_code=400, detail="Network controller not initialized")
-                #TODO: Implement dataplane switching
-                if config.mode == WorkerNetworkMode.ETHERNET.value:
-                    self.network_controller.use_ethernet_dataplane()
-                elif config.mode == WorkerNetworkMode.WIFI.value:
-                    self.network_controller.use_wifi_dataplane()
-                else:
-                    raise HTTPException(status_code=400, detail="Invalid network mode")
-                return {"status": "success", "mode": config.mode}
-            except Exception as e:
-                logger.error(f"Failed to update network configuration: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-            
-        @self.app.get('/worker/status')
-        async def get_worker_status():
-            try:
-                status = {
-                    "worker_id": self.worker_id,
-                    "hardware_serial": self.hardware_serial,
-                    "hardware_identifier": self.hardware_identifier,
-                    "network_mode": self.network_controller.current_mode.value if self.network_controller else "unknown",
-                }
-                return {"status": "success", "worker_status": status}
-            except Exception as e:
-                logger.error(f"Failed to get worker status: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.error(f"WebSocket connection error: {e}")
+            finally:
+                await websocket.close()
 
     def start_api_server(self):
         def run():

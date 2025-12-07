@@ -1,5 +1,5 @@
 from common.network import NetworkManager
-from common.model import WorkerHeartbeat, WorkerNetworkMode, InterfaceStatus
+from common.model import InterfaceStatus
 import logging
 from time import sleep
 from pathlib import Path

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from worker.network_manager import WorkerNetworkController, WorkerNetworkMode
+from worker.network_manager import WorkerNetworkController, ConnectionType
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 import os
@@ -22,7 +22,7 @@ worker_id = int(os.environ.get('WORKER_ID', '0'))
 network_controller = WorkerNetworkController(worker_id=worker_id, config=config)
 
 class NetworkConfigRequest(BaseModel):
-    mode: WorkerNetworkMode
+    mode: ConnectionType
     worker_id: int
 
 @asynccontextmanager
@@ -46,9 +46,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 async def configure_network(request: NetworkConfigRequest):
     try:
         match request.mode:
-            case WorkerNetworkMode.ETHERNET:
+            case ConnectionType.ETHERNET:
                 network_controller.use_ethernet_dataplane()
-            case WorkerNetworkMode.WIFI:
+            case ConnectionType.WIFI:
                 network_controller.use_wifi_dataplane()
             case _:
                 raise HTTPException(status_code=400, detail="Invalid network mode specified")
@@ -62,6 +62,6 @@ async def get_network_status():
     results = {
         "connectivity": network_controller._verify_connectivity(),
         "current_mode": network_controller.current_mode.value,
-        "ipv4_address": network_controller.eth_ipv4 if network_controller.current_mode == WorkerNetworkMode.ETHERNET else network_controller.wifi_ipv4
+        "ipv4_address": network_controller.eth_ipv4 if network_controller.current_mode == ConnectionType.ETHERNET else network_controller.wifi_ipv4
     }
     return results
