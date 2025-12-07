@@ -159,9 +159,11 @@ class WorkerNetworkController(NetworkManager):
         logger.info(f"Verifying {self.current_mode.value} data plane connectivity to controller...")
         target_ip = self.wifi_controller_ipv4 if self.current_mode == ConnectionType.WIFI else self.eth_controller_ipv4
         try:
-            r = requests.get(f"http://{target_ip}:{self.data_port}/datatest")
+            r = requests.get(f"http://{target_ip}:{self.data_port}/api/connectivity_test")
             if r.status_code == 200:
-                logger.info("Connectivity to controller verified successfully")
+                logger.info("Control connectivity got status 200, parsing response...")
+                response = ConnectivityTestResponse(**r.json())
+                logger.info(f'Data plane connectivity to controller "{response.from_identifier}" verified successfully on {response.plane.value} plane')
                 return True
             else:
                 logger.error(f"Connectivity verification failed, unexpected response code {r.status_code}")
@@ -179,7 +181,7 @@ class WorkerNetworkController(NetworkManager):
             if r.status_code == 200:
                 logger.info("Control connectivity got status 200, parsing response...")
                 response = ConnectivityTestResponse(**r.json())
-                logger.info(f'Connectivity to controller "{response.from_identifier}" verified successfully on {response.plane.value} plane')
+                logger.info(f'Control plane connectivity to controller "{response.from_identifier}" verified successfully on {response.plane.value} plane')
                 return True
             else:
                 logger.error(f"Control connectivity verification failed, unexpected response code {r.status_code}")
@@ -188,20 +190,29 @@ class WorkerNetworkController(NetworkManager):
             logger.error(f"Failed to verify control plane connectivity to controller: {e}")
             return False
 
-    def _send_control_heartbeat(self, serial: str, hardware_identifier: str):
-        logger.info("Sending heartbeat to controller...")
-        print(f"Sending heartbeat to controller... {time()}")
-        heartbeat = WorkerHeartbeat(
-            worker_id=self.worker_id,
-            serial=serial,
-            hardware_identifier=hardware_identifier,
-            control_ip_address=self.eth_ipv4,
-            data_connectivity=self._verify_data_connectivity(),
-            data_ip_address=self.wifi_ipv4 if self.current_mode == ConnectionType.WIFI else self.eth_ipv4,
-            data_plane=self.current_mode,
-            timestamp=int(time())
-        )
-        requests.post(f"http://{self.eth_controller_ipv4}:{self.control_port}/api/heartbeat", json=heartbeat.__dict__, timeout=5)
+    def _send_control_heartbeat(self, serial: str, hardware_identifier: str) -> bool:
+        try:
+            logger.info("Sending heartbeat to controller...")
+            heartbeat = WorkerHeartbeat(
+                worker_id=self.worker_id,
+                serial=serial,
+                hardware_identifier=hardware_identifier,
+                control_ip_address=self.eth_ipv4,
+                data_connectivity=self._verify_data_connectivity(),
+                data_ip_address=self.wifi_ipv4 if self.current_mode == ConnectionType.WIFI else self.eth_ipv4,
+                data_plane=self.current_mode,
+                timestamp=int(time())
+            )
+            r = requests.post(f"http://{self.eth_controller_ipv4}:{self.control_port}/api/heartbeat", json=heartbeat.__dict__, timeout=5)
+            if r.status_code == 200:
+                logger.info("Heartbeat sent successfully")
+                return True
+            else:
+                logger.error(f"Failed to send heartbeat, status code: {r.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"Exception occurred while sending heartbeat: {e}")
+            return False
     
     def destroy(self):
         print("TODO: Implement worker network cleanup")

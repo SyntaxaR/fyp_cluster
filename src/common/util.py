@@ -1,7 +1,9 @@
 import logging
 import hashlib
 
-def get_cpu_serial(logger: logging.Logger) -> str:
+logger = logging.getLogger(__name__)
+
+def get_cpu_serial() -> str:
     try:
         with open('/proc/cpuinfo', 'r') as f:
             for line in f:
@@ -11,7 +13,6 @@ def get_cpu_serial(logger: logging.Logger) -> str:
         logger.warning(f"Failed to read CPU serial number: {e}")
         logger.warning("Use Ethernet MAC address instead as fallback")
         raise e
-
 
 def generate_identifier(serial: str) -> str:
     # Generate user-friendly identifier from the hardware serial

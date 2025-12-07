@@ -7,21 +7,21 @@ install_hailo="n"
 if lspci | grep -i Hailo &> /dev/null; then
     echo "Hailo accelerator detected onboard."
     # Detect dkms & hailo-all installation
-    dkms=$(dpkg -s dkms | grep "Status: install ok installed" &> /dev/null; echo $?)
-    hailo_all=$(dpkg -s hailo-all | grep "Status: install ok installed" &> /dev/null; echo $?)
+    dkms=$(dpkg -s dkms 2> /dev/null | grep "Status: install ok installed" &> /dev/null; echo $?)
+    hailo_all=$(dpkg -s hailo-all 2> /dev/null | grep "Status: install ok installed" &> /dev/null; echo $?)
     if [ $dkms -eq 0 ] && [ $hailo_all -eq 0 ]; then
         echo "Hailo dependencies found! Starting worker with Hailo."
     else
         echo "Hailo dependencies not found, install now? (y/n)"
         read -r install_hailo
-        if [ "$install_hailo" != "y"]; then
+        if [ "$install_hailo" != "y" ]; then
             echo "Hailo dependencies installation skipped, starting worker without Hailo support."
         else
             echo "Installing Hailo dependencies..."
             sudo apt update
             sudo apt install -y dkms hailo-all
-            dkms=$(dpkg -s dkms | grep "Status: install ok installed" &> /dev/null; echo $?)
-            hailo_all=$(dpkg -s hailo-all | grep "Status: install ok installed" &> /dev/null; echo $?)
+            dkms=$(dpkg -s dkms 2> /dev/null | grep "Status: install ok installed" &> /dev/null; echo $?)
+            hailo_all=$(dpkg -s hailo-all 2> /dev/null | grep "Status: install ok installed" &> /dev/null; echo $?)
             if [ $dkms -eq 0 ] && [ $hailo_all -eq 0 ]; then
                 echo "Hailo dependencies installed successfully."
             else

@@ -17,7 +17,8 @@ logging.basicConfig(filename='controller.log', level=logging.DEBUG,
 monitor_interval = 10  # seconds
 timeout_threshold = 15 # seconds (15s -> 3x worker's heartbeat interval)
 
-app = FastAPI(title="Controller API")
+control_app = FastAPI(title="Controller Control API")
+data_app = FastAPI(title="Controller Data API")
 serial = get_cpu_serial()
 identifier = generate_identifier(serial)
 config = load_config()
@@ -29,10 +30,9 @@ registered_workers: dict[int, WorkerRegistration] = {}
 worker_id_counter = 0
 workers_ws_manager = None
 
-@app.post('/api/heartbeat')
+@control_app.post('/api/heartbeat')
 async def receive_heartbeat(heartbeat: WorkerHeartbeat):
     logger.info(f"Received heartbeat from Worker ID {heartbeat.worker_id} (Serial: {heartbeat.serial})")
-    print(f"Received heartbeat from Worker ID {heartbeat.worker_id} {heartbeat.hardware_identifier} (Serial: {heartbeat.serial}, Data Connectivity: {heartbeat.data_connectivity}, Data Plane: {heartbeat.data_plane}, Control IP: {heartbeat.control_ip_address}, Data IP: {heartbeat.data_ip_address}, Timestamp: {int(time.time())})")
     if heartbeat.worker_id == -1:
         # Unassigned worker, add to pending list if not already present
         if heartbeat.serial in pending_workers:
@@ -55,7 +55,8 @@ async def receive_heartbeat(heartbeat: WorkerHeartbeat):
         logger.info(f'Worker ID {heartbeat.worker_id} "{registered_workers[heartbeat.worker_id].hardware_identifier}" heartbeat timestamp updated (active)')
 
 # plane depends on the incoming request interface
-@app.post('/api/connectivity_test')
+@control_app.get('/api/connectivity_test')
+@data_app.get('/api/connectivity_test')
 async def connectivity_test(request: Request) -> ConnectivityTestResponse:
     if request.client.host.startswith(eth_subnet):
         plane = ConnectionType.ETHERNET
@@ -63,7 +64,7 @@ async def connectivity_test(request: Request) -> ConnectivityTestResponse:
         plane = ConnectionType.WIFI
     else:
         plane = ConnectionType.INVALID
-    logger.info(f"Received connectivity test from {request.client.host} on {plane.value} plane")
+    logger.info(f"Received connectivity test from {request.client.host} on {plane} plane")
     return ConnectivityTestResponse(from_identifier=identifier, message="Connectivity test successful", plane=plane)
 
 async def register_worker(heartbeat: WorkerHeartbeat, worker_id: int=-1) -> bool:
@@ -85,7 +86,7 @@ async def register_worker(heartbeat: WorkerHeartbeat, worker_id: int=-1) -> bool
         hardware_identifier=heartbeat.hardware_identifier,
         control_ip=heartbeat.control_ip_address,
         data_ip=heartbeat.data_ip_address,
-        data_plane=heartbeat.data_plane,
+        data_plane=heartbeat.data_plane, # TODO: I
         timestamp=int(time.time()),
         status=WorkerStatus.REGISTERED
     )
@@ -112,11 +113,11 @@ async def on_worker_status_change(worker_id: int, status: WorkerStatus):
     else:
         logger.warning(f'Received status update for unknown Worker ID {worker_id}')
 
-def start_api_server(app):
+def start_api_server(app, port):
     def run():
-        uvicorn.run(app, host="0.0.0.0", port=config['controller']['control_port'], log_level="info")
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
     api_thread = threading.Thread(target=run, daemon=True)
-    logger.info("Starting FastAPI server for controller API...")
+    logger.info("Starting FastAPI server for controller...")
     api_thread.start()
 
 async def monitor_worker_timestamp():
@@ -152,14 +153,14 @@ async def async_main():
         while True:
             await asyncio.sleep(30)
             # Print all kinds of workers (pending registration, registered, active, reconnecting, inactive...)
-            logger.info("----- Worker Status Summary -----")
-            print("----- Worker Status Summary -----")
+            logger.info(f"\n----- Worker Status Summary {int(time.time())} -----")
+            print(f"\n----- Worker Status Summary {int(time.time())} -----")
             for serial, heartbeat in pending_workers.items():
-                print(f'Pending Registration: Worker (Serial: {serial}, Identifier: {heartbeat.hardware_identifier}, Last Heartbeat: {heartbeat.timestamp})')
-                logger.info(f'Pending Registration: Worker (Serial: {serial}, Identifier: {heartbeat.hardware_identifier}, Last Heartbeat: {heartbeat.timestamp})')
+                print(f'Pending Registration: Worker "{heartbeat.hardware_identifier}" (Serial: {serial}, Last Heartbeat: {int(time.time()) - heartbeat.timestamp}s before)')
+                logger.info(f'Pending Registration: Worker "{heartbeat.hardware_identifier}" (Serial: {serial}, Last Heartbeat: {int(time.time()) - heartbeat.timestamp}s before)')
             for worker_id, registration in registered_workers.items():
-                print(f'Registered: Worker ID {worker_id} "{registration.hardware_identifier}" (Serial: {registration.serial}, Status: {registration.status.value}, Last Heartbeat: {registration.timestamp})')
-                logger.info(f'Registered: Worker ID {worker_id} "{registration.hardware_identifier}" (Serial: {registration.serial}, Status: {registration.status.value}, Last Heartbeat: {registration.timestamp})')
+                print(f'Registered: Worker {worker_id} "{registration.hardware_identifier}" : {registration.status.value} (Serial: {registration.serial}, Last Heartbeat: {int(time.time()) - registration.timestamp}s before)')
+                logger.info(f'Registered: Worker {worker_id} "{registration.hardware_identifier}" : {registration.status.value} (Serial: {registration.serial}, Last Heartbeat: {int(time.time()) - registration.timestamp}s before)')
     except KeyboardInterrupt:
         logger.info("Controller shutting down...")
     finally:
@@ -172,6 +173,7 @@ if __name__ == "__main__":
     network_manager.initialize(initialize_wifi=False)
     # Start API server
     print("Starting Controller API server...")
-    start_api_server(app)
+    start_api_server(control_app, config['controller']['control_port'])
+    start_api_server(data_app, config['controller']['data_port'])
     print("Controller is running.")
     asyncio.run(async_main())

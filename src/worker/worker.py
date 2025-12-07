@@ -67,7 +67,7 @@ class Worker:
             self.initialized = True
     
         # Get hardware serial and generate identifier
-        self.hardware_serial = get_cpu_serial(logger)
+        self.hardware_serial = get_cpu_serial()
         logger.info(f"Worker Hardware Serial: {self.hardware_serial}")
         self.hardware_identifier = generate_identifier(self.hardware_serial)
         logger.info(f"Worker Hardware Identifier: {self.hardware_identifier}")
@@ -96,10 +96,18 @@ class Worker:
         self.stop_heartbeat.clear()
 
         def heartbeat_task():
+            count = 0
             while not self.stop_heartbeat.is_set():
                 try:
                     logger.info(f"Sending heartbeat to controller {time.time()}")
-                    self.network_controller._send_control_heartbeat(self.hardware_serial, self.hardware_identifier)
+                    success = self.network_controller._send_control_heartbeat(self.hardware_serial, self.hardware_identifier)
+                    if not success:
+                        logger.warning("Controller did not acknowledge heartbeat")
+                        count += 1
+                        if count % 10 == 1:
+                            print(f"Controller did not acknowledge heartbeat (consecutive attempt #{count})")
+                    else:
+                        count = 0
                     time.sleep(interval)
                 except requests.exceptions.ConnectionError:
                     logger.warning("Failed to connect to controller for heartbeat")
@@ -173,7 +181,7 @@ if __name__ == "__main__":
     config = load_config()
     worker = Worker(config)
     worker.intitialize()
-    print(f"Worker is running!\nHardware Serial: {worker.hardware_serial}\nIdentifier: {worker.hardware_identifier}")
+    print(f'Worker "{worker.hardware_identifier}" is running!\nHardware Serial: {worker.hardware_serial}')
 
     try:
         while True:

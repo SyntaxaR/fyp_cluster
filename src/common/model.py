@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, unique
 from pydantic import BaseModel
 from common.util import generate_identifier
 
@@ -6,16 +6,10 @@ class ResponseStatus(Enum):
     SUCCESS = "success"
     FAILURE = "failure"
 
-class RequestResponse:
-    def __init__(self, request_id: str, message: str):
-        self.request_id = request_id
-        self.message = message
-    def __bool__(self):
-        return self.status == ResponseStatus.SUCCESS
-
-class WorkerClusterNetworkInterface(Enum):
-    ETHERNET = "eth0"
-    WIFI = "wlan0"
+@unique
+class WorkerClusterNetworkInterface(str, Enum):
+    ETHERNET: str = "eth0"
+    WIFI: str = "wlan0"
 
 class WorkerIdAssignmentRequest(BaseModel):
     worker_id: int # Worker ID to be assigned
@@ -26,23 +20,26 @@ class WorkerClusterNetworkConfig(BaseModel):
     subnet: str
     gateway: str
 
-class ConnectionType(Enum):
-    ETHERNET = "ethernet"
-    WIFI = "wifi"
-    INVALID = "invalid"
+@unique
+class ConnectionType(str, Enum):
+    ETHERNET: str = "ethernet"
+    WIFI: str = "wifi"
+    INVALID: str = "invalid"
 
-class InterfaceStatus(Enum):
-    CONNECTED = "connected"
-    DISCONNECTED = "disconnected"
-    UNAVAILABLE = "unavailable"
-    CONNECTING = "connecting"
+@unique
+class InterfaceStatus(str, Enum):
+    CONNECTED: str = "connected"
+    DISCONNECTED: str = "disconnected"
+    UNAVAILABLE: str = "unavailable"
+    CONNECTING: str = "connecting"
 
-class WorkerStatus(Enum):
-    PENDING_REGISTRATION = "pending_registration"
-    REGISTERED = "registered"
-    ACTIVE = "active"
-    RECONNECTING = "reconnecting"
-    INACTIVE = "inactive"
+@unique
+class WorkerStatus(str, Enum):
+    PENDING_REGISTRATION: str = "pending_registration"
+    REGISTERED: str = "registered"
+    ACTIVE: str = "active"
+    RECONNECTING: str = "reconnecting"
+    INACTIVE: str = "inactive"
 
 # WorkerControlInfo class is supposed to be used in controller only
 class WorkerControlInfo():
