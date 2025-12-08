@@ -31,13 +31,18 @@ class Worker:
         self.stop_heartbeat = threading.Event()
         self.initialized = False
 
-        self.app = FastAPI()
+        self.control_app = FastAPI()
+        self.data_app = FastAPI()
         self.ws_server = WorkerWebSocketServer(config)
         self._setup_fastapi_routes()
 
+        # TODO: FOR DEMO ONLY
+        from worker.tmp.demo251208 import InferenceServer
+        self.inference_server: InferenceServer = None
+
     def _setup_fastapi_routes(self):
         # WebSocket endpoint for real-time controller -> worker communication
-        @self.app.websocket("/worker_ws")
+        @self.control_app.websocket("/worker_ws")
         async def worker_handle_websocket(websocket: WebSocket):
             await self.ws_server.handle_connection(websocket)
         
@@ -49,17 +54,34 @@ class Worker:
             logger.info("Received command to switch to WiFi connection")
             self.network_controller.switch_to_wifi(ssid=data.get('ssid'), password=data.get('password'))
         
+        async def _handle_update_worker_id(data: dict[str, any]):
+            new_worker_id = data.get('worker_id', -1)
+            if isinstance(new_worker_id, int) and -1 < new_worker_id:
+                logger.info(f"Updating Worker ID from {self.worker_id} to {new_worker_id}")
+                self.worker_id = new_worker_id
+                self.network_controller.worker_id = new_worker_id
+            else:
+                logger.error(f"Received invalid Worker ID update: {new_worker_id}")
+
         self.ws_server.register_handler('switch_to_ethernet', handle_switch_to_ethernet)
         self.ws_server.register_handler('switch_to_wifi', handle_switch_to_wifi)
+        self.ws_server.register_handler('update_worker_id', _handle_update_worker_id)
 
-    def start_api_server(self):
+    def start_control_api_server(self):
         def run():
-            uvicorn.run(self.app, host="0.0.0.0", port=self.config['worker']['control_port'], log_level="info")
+            uvicorn.run(self.control_app, host="0.0.0.0", port=self.config['worker']['control_port'], log_level="info")
         api_thread = threading.Thread(target=run, daemon=True)
         logger.info("Starting FastAPI server for worker control API...")
         api_thread.start()
     
-    def intitialize(self):
+    def start_data_api_server(self):
+        def run():
+            uvicorn.run(self.data_app, host="0.0.0.0", port=self.config['worker']['data_port'], log_level="info")
+        api_thread = threading.Thread(target=run, daemon=True)
+        logger.info("Starting FastAPI server for worker data API...")
+        api_thread.start()
+
+    def initialize(self):
         if self.initialized:
             logger.error("Worker.initialize() is called while Worker is already initialized!")
             raise RuntimeError("Worker.initialize() is called while Worker is already initialized!")
@@ -84,7 +106,8 @@ class Worker:
         self._handle_startup()
 
         # Start FastAPI server
-        self.start_api_server()
+        self.start_control_api_server()
+        self.start_data_api_server()
         
     def _handle_startup(self):
         logger.info("Starting worker without cached Worker ID...")
@@ -175,12 +198,89 @@ class Worker:
     #             logger.info("Cleared cached Worker ID")
     #     except Exception as e:
     #         logger.error(f"Failed to clear cached Worker ID: {e}")
-    
+
+
+    # START 251208 DEMO
+
+    def _setup_demo_routes(self):
+        @self.data_app.get("/demo/start_inference")
+        async def demo_start_inference():
+            if self.inference_server is None:
+                from worker.tmp.demo251208 import InferenceServer
+                self.inference_server = InferenceServer()
+                logger.info("Demo Inference Server initialized")
+                # Run inference in a separate thread
+                threading.Thread(target=self.run_inference, daemon=True).start()
+                return {"status": "Inference server started"}
+            else:
+                logger.warning("Demo Inference Server is already running")
+                return {"status": "Inference server already running"}
+        
+    inputs = []
+    # Report to controller every 10 inferences
+    report_interval = 10
+    # When inputs is empty, request a new batch from controller
+    # Else, keep running inference on existing inputs until empty
+    def run_inference(self):
+        if self.inference_server is None:
+            logger.error("Inference server is not initialized!")
+            return
+        correct_count = 0
+        total_count = 0
+        while True:
+            if len(self.inputs) == 0:
+                # Request new batch from controller
+                #     @data_app.get("/demo/get_batch")
+                #     async def demo_get_batch():
+                #     batch_size = 1024
+                #     global dataset
+                #     if dataset is None:
+                #         return {"success": False, "message": "No dataset loaded"}
+                #     # Get a batch of data
+                #     batch = dataset.shuffle().select(range(batch_size))
+                #     # Mix fulltext and overall labels into a list of tuples
+                #     data = list(zip(batch['fulltext'], batch['overall']))
+                #     return {"success": True, "data": data}
+                try:
+                    response = requests.get(f"{self.network_controller.eth_controller_ipv4 if self.network_controller.current_mode == ConnectionType.ETHERNET else self.network_controller.wifi_controller_ipv4}:{self.config['controller']['data_port']}/demo/get_batch")
+                    if response.status_code == 200:
+                        data = response.json().get('data', [])
+                        self.inputs = data
+                        logger.info(f"Received new inference batch of size {len(data)} from controller")
+                    else:
+                        logger.error(f"Failed to get inference batch from controller: {response.status_code}")
+                        time.sleep(2)
+                        continue
+                except Exception as e:
+                    logger.error(f"Error requesting inference batch from controller: {e}")
+                    time.sleep(2)
+                    continue
+
+            text, true_id = self.inputs.pop(0)
+            is_correct = self.inference_server.run_inference(text, true_id)
+            total_count += 1
+            if is_correct:
+                correct_count += 1
+
+            if total_count % self.report_interval == 0:
+                try:
+                    #@data_app.get("/demo/submit_inference/{serial}/{correct}/{total}")
+                    response = requests.get(f"{self.network_controller.eth_controller_ipv4 if self.network_controller.current_mode == ConnectionType.ETHERNET else self.network_controller.wifi_controller_ipv4}:{self.config['controller']['data_port']}/demo/submit_inference/{self.hardware_serial}/{correct_count}/{self.report_interval}")
+                except Exception as e:
+                    logger.error(f"Error reporting inference results to controller: {e}")
+                    continue
+                total_count = 0
+                correct_count = 0
+
+
+    # END 251208 DEMO
+
 
 if __name__ == "__main__":
     config = load_config()
     worker = Worker(config)
-    worker.intitialize()
+    worker._setup_demo_routes()
+    worker.initialize()
     print(f'Worker "{worker.hardware_identifier}" is running!\nHardware Serial: {worker.hardware_serial}')
 
     try:

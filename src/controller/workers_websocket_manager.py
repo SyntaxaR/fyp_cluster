@@ -32,6 +32,8 @@ class WorkersWebSocketManager:
             self.connection_tasks[worker.worker_id] = task
             logger.info(f"Successfully established WebSocket connection to {worker} at {ws_uri}")
             await self._notify_status_change(worker.worker_id, WorkerStatus.ACTIVE)
+            # Update worker id
+            await self.send_command(worker, "update_worker_id", {"worker_id": worker.worker_id})
             return True
         except asyncio.TimeoutError:
             logger.error(f"WebSocket connection to {worker} at {ws_uri} timed out")

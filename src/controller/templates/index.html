@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Worker Cluster Controller</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .refresh-info {
+            margin-top: 15px;
+            padding: 10px 15px;
+            background: #f0f4ff;
+            border-left: 4px solid #667eea;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .refresh-info span {
+            color: #555;
+            font-size: 0.9em;
+        }
+
+        .refresh-button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.3s;
+        }
+
+        .refresh-button:hover {
+            background: #5568d3;
+        }
+
+        .section {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+            font-size: 1.8em;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .badge-pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-registered {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        thead {
+            background: #f8fafc;
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #475569;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        tr:hover {
+            background: #f8fafc;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-pending_registration {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .status-registered {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .status-active {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-reconnecting {
+            background: #fed7aa;
+            color: #92400e;
+        }
+
+        .status-inactive {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .plane-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .plane-ethernet {
+            background: #e0e7ff;
+            color: #3730a3;
+        }
+
+        .plane-wifi {
+            background: #ddd6fe;
+            color: #5b21b6;
+        }
+
+        .plane-invalid {
+            background: #e5e7eb;
+            color: #6b7280;
+        }
+
+        .button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-right: 5px;
+        }
+
+        .button-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .button-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .button-secondary {
+            background: #10b981;
+            color: white;
+        }
+
+        .button-secondary:hover {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(16, 185, 129, 0.3);
+        }
+
+        .button-tertiary {
+            background: #8b5cf6;
+            color: white;
+        }
+
+        .button-tertiary:hover {
+            background: #7c3aed;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(139, 92, 246, 0.3);
+        }
+
+        .button:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #94a3b8;
+        }
+
+        .empty-state-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+
+        .timestamp {
+            font-size: 0.85em;
+            color: #64748b;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+            max-width: 350px;
+        }
+
+        .notification-success {
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid #10b981;
+        }
+
+        .notification-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .worker-id {
+            font-weight: 700;
+            color: #667eea;
+            font-size: 1.1em;
+        }
+
+        .serial-number {
+            font-family: 'Courier New', monospace;
+            background: #f1f5f9;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .data-connectivity {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+
+        .data-connectivity-true {
+            background: #10b981;
+        }
+
+        .data-connectivity-false {
+            background: #ef4444;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            table {
+                font-size: 0.9em;
+            }
+
+            .button {
+                padding: 6px 12px;
+                font-size: 0.85em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🖥️ Worker Cluster Controller</h1>
+            <p class="subtitle">Manage and monitor your worker nodes in real-time</p>
+            <div class="refresh-info">
+                <span>⏱️ Auto-refresh: Every 5 seconds | Last updated: <span id="lastUpdate">--:--:--</span></span>
+                <button class="refresh-button" onclick="refreshData()">🔄 Refresh Now</button>
+            </div>
+        </header>
+
+        <div class="section">
+            <h2>⏳ Pending Registration <span class="badge badge-pending" id="pendingCount">{{ pending_workers|length }}</span></h2>
+            <div id="pendingWorkersContainer">
+                {% if pending_workers|length == 0 %}
+                <div class="empty-state">
+                    <div class="empty-state-icon">📋</div>
+                    <p>No workers pending registration</p>
+                </div>
+                {% else %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Hardware Identifier</th>
+                            <th>Serial Number</th>
+                            <th>Control IP</th>
+                            <th>Data Connectivity</th>
+                            <th>Data Plane</th>
+                            <th>Data IP</th>
+                            <th>Last Heartbeat</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for serial, worker in pending_workers.items() %}
+                        <tr>
+                            <td><strong>{{ worker.hardware_identifier }}</strong></td>
+                            <td><span class="serial-number">{{ worker.serial }}</span></td>
+                            <td>{{ worker.control_ip_address }}</td>
+                            <td>
+                                <span class="data-connectivity data-connectivity-{{ worker.data_connectivity|lower }}"></span>
+                                {{ 'Connected' if worker.data_connectivity else 'Disconnected' }}
+                            </td>
+                            <td><span class="plane-badge plane-{{ worker.data_plane }}">{{ worker.data_plane|upper }}</span></td>
+                            <td>{{ worker.data_ip_address }}</td>
+                            <td class="timestamp" data-timestamp="{{ worker.timestamp }}">{{ worker.timestamp }}</td>
+                            <td>
+                                <button class="button button-primary" onclick="registerWorker('{{ worker.serial }}')">
+                                    Register
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>✅ Registered Workers <span class="badge badge-registered" id="registeredCount">{{ registered_workers|length }}</span></h2>
+            <div id="registeredWorkersContainer">
+                {% if registered_workers|length == 0 %}
+                <div class="empty-state">
+                    <div class="empty-state-icon">🤖</div>
+                    <p>No registered workers yet</p>
+                </div>
+                {% else %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Worker ID</th>
+                            <th>Hardware Identifier</th>
+                            <th>Serial Number</th>
+                            <th>Control IP</th>
+                            <th>Data Plane</th>
+                            <th>Data IP</th>
+                            <th>Status</th>
+                            <th>Last Heartbeat</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for worker_id, worker in registered_workers.items() %}
+                        <tr>
+                            <td><span class="worker-id">#{{ worker_id }}</span></td>
+                            <td><strong>{{ worker.hardware_identifier }}</strong></td>
+                            <td><span class="serial-number">{{ worker.serial }}</span></td>
+                            <td>{{ worker.control_ip }}</td>
+                            <td><span class="plane-badge plane-{{ worker.data_plane }}">{{ worker.data_plane|upper }}</span></td>
+                            <td>{{ worker.data_ip }}</td>
+                            <td><span class="status-badge status-{{ worker.status }}">{{ worker.status|replace('_', ' ') }}</span></td>
+                            <td class="timestamp" data-timestamp="{{ worker.timestamp }}">{{ worker.timestamp }}</td>
+                            <td>
+                                <button class="button button-secondary" 
+                                        onclick="switchDataPlane({{ worker_id }}, 'ethernet')" 
+                                        {% if worker.data_plane == 'ethernet' %}disabled{% endif %}>
+                                    → Ethernet
+                                </button>
+                                <button class="button button-tertiary" 
+                                        onclick="switchDataPlane({{ worker_id }}, 'wifi')"
+                                        {% if worker.data_plane == 'wifi' %}disabled{% endif %}>
+                                    → WiFi
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+        const AUTO_REFRESH_SECONDS = 5;
+
+        function updateLastUpdateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString();
+            document.getElementById('lastUpdate').textContent = timeString;
+        }
+
+        function formatTimestamp(timestamp) {
+            const now = Math.floor(Date.now() / 1000);
+            const diff = now - timestamp;
+            
+            if (diff < 60) return `${diff}s ago`;
+            if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+            return `${Math.floor(diff / 86400)}d ago`;
+        }
+
+        function updateAllTimestamps() {
+            const timestampElements = document.querySelectorAll('.timestamp[data-timestamp]');
+            timestampElements.forEach(element => {
+                const timestamp = parseInt(element.getAttribute('data-timestamp'));
+                element.textContent = formatTimestamp(timestamp);
+            });
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification notification-${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => {
+                    document.body.removeChild(notification);
+                }, 300);
+            }, 3000);
+        }
+
+        function refreshData() {
+            location.reload();
+        }
+
+        async function registerWorker(serial) {
+            try {
+                const button = event.target;
+                const originalText = button.textContent;
+                button.disabled = true;
+                button.innerHTML = `Registering... <span class="loading"></span>`;
+
+                const response = await fetch(`/op/register_worker/${serial}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    showNotification(result.message, 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification(result.message, 'error');
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }
+            } catch (error) {
+                console.error('Error registering worker:', error);
+                showNotification('Failed to register worker', 'error');
+                const button = event.target;
+                button.disabled = false;
+                button.textContent = originalText;
+            }
+        }
+
+        async function switchDataPlane(workerId, plane) {
+            try {
+                const button = event.target;
+                const originalText = button.textContent;
+                button.disabled = true;
+                button.innerHTML = `Switching... <span class="loading"></span>`;
+
+                const response = await fetch(`/op/switch_data_plane/${workerId}/${plane}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    showNotification(result.message, 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification(result.message, 'error');
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }
+            } catch (error) {
+                console.error('Error switching data plane:', error);
+                showNotification('Failed to switch data plane', 'error');
+                const button = event.target;
+                button.disabled = false;
+                button.textContent = originalText;
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            updateLastUpdateTime();
+            updateAllTimestamps();
+            
+            // Set up auto-refresh
+            autoRefreshInterval = setInterval(() => {
+                location.reload();
+            }, AUTO_REFRESH_SECONDS * 1000);
+
+            // Update time display every second
+            setInterval(updateLastUpdateTime, 1000);
+            
+            // Update timestamps every second
+            setInterval(updateAllTimestamps, 1000);
+        });
+    </script>
+</body>
+</html>
