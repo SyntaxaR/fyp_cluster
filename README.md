@@ -1,1 +1,1 @@
-###     Python >= 3.9 with Poetry
+###     Python >= 3.11 with uv

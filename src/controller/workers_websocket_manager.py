@@ -31,7 +31,7 @@ class WorkersWebSocketManager:
             task = asyncio.create_task(self._receive_loop(worker, ws))
             self.connection_tasks[worker.worker_id] = task
             logger.info(f"Successfully established WebSocket connection to {worker} at {ws_uri}")
-            await self._notify_status_change(worker.worker_id, WorkerStatus.ACTIVE)
+            await self._notify_status_change(worker, WorkerStatus.ACTIVE)
             return True
         except asyncio.TimeoutError:
             logger.error(f"WebSocket connection to {worker} at {ws_uri} timed out")
@@ -50,19 +50,18 @@ class WorkersWebSocketManager:
         finally:
             await self._handle_disconnection(worker)
     
-    async def _handle_disconnection(self, worker: WorkerControlInfo | int, reconnect: bool = True):
-        worker_id = worker.worker_id if isinstance(worker, WorkerControlInfo) else worker
-        await self._notify_status_change(worker_id, WorkerStatus.INACTIVE)
-        if worker_id in self.connections:
+    async def _handle_disconnection(self, worker: WorkerControlInfo, reconnect: bool = True):
+        await self._notify_status_change(worker, WorkerStatus.INACTIVE)
+        if worker.worker_id in self.connections:
             try:
-                await self.connections[worker_id].close()
+                await self.connections[worker.worker_id].close()
             except Exception as e:
                 logger.error(f"Error closing WebSocket connection to {worker}: {e}")
-            del self.connections[worker_id]
+            del self.connections[worker.worker_id]
 
-        if worker_id in self.connection_tasks:
-            self.connection_tasks[worker_id].cancel()
-            del self.connection_tasks[worker_id]
+        if worker.worker_id in self.connection_tasks:
+            self.connection_tasks[worker.worker_id].cancel()
+            del self.connection_tasks[worker.worker_id]
 
         if not reconnect:
             await self._notify_status_change(worker, WorkerStatus.INACTIVE)
@@ -89,7 +88,7 @@ class WorkersWebSocketManager:
             attempts += 1
             await asyncio.sleep(self.reconnect_interval)
         logger.error(f"Failed to reconnect to {worker} after {self.max_reconnect_attempts} attempts (max reached)")
-        await self._notify_status_change(worker.worker_id, WorkerStatus.INACTIVE)
+        await self._notify_status_change(worker, WorkerStatus.INACTIVE)
     
     async def _notify_status_change(self, worker: WorkerControlInfo, status: WorkerStatus):
         for callback in self.worker_status_change_callbacks:
