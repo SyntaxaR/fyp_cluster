@@ -1,3 +1,5 @@
+from typing import Any
+
 from common.network import NetworkManager
 from common.model import WorkerHeartbeat, ConnectionType, InterfaceStatus, ConnectivityTestResponse
 import logging
@@ -9,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorkerNetworkController(NetworkManager):
-    def __init__(self, worker_id: int, config: dict[str, any]):
+    def __init__(self, worker_id: int, config: dict[str, Any]):
         super().__init__()
         self.worker_id = worker_id
         self.config = config
@@ -55,7 +57,7 @@ class WorkerNetworkController(NetworkManager):
             self.disable_wifi_interface(self.wifi_interface)
         else:
             raise RuntimeError("Cannot switch to Ethernet mode from invalid current network mode")
-        # Ethernet should already be configured via DHCP during initialization, just disable wifi
+        # Ethernet should already be configured via DHCP during initialization, just disable Wi-Fi
         self.current_mode = ConnectionType.ETHERNET
         self.wifi_ipv4 = None
         logger.info("Switched to Ethernet connection mode")
@@ -67,7 +69,7 @@ class WorkerNetworkController(NetworkManager):
             print("Requested switch to WiFi mode, but already in WiFi mode")
             return
         logger.info("Switching to WiFi connection mode...")
-        # Enable and connect to WiFi
+        # Enable and connect to Wi-Fi
         self.enable_wifi_interface(self.wifi_interface, ssid, password)
         logger.info("Switched to WiFi connection mode")
         print("Switched to WiFi connection mode")
@@ -75,7 +77,7 @@ class WorkerNetworkController(NetworkManager):
     def enable_wifi_interface(self, interface: str, ssid: str, password: str):
         logger.info(f"Enabling WiFi interface {interface} and connecting to SSID '{ssid}'...")
         self.run_command(['nmcli', 'radio', 'wifi', 'on'])
-        sleep(3) # Wait for wifi scan to complete
+        sleep(3) # Wait for Wi-Fi scan to complete
         # Connect to specified SSID
         self.run_command(['nmcli', 'device', 'wifi', 'connect', ssid, 'password', password, 'ifname', interface])
         sleep(3)
@@ -124,7 +126,7 @@ class WorkerNetworkController(NetworkManager):
             if self._check_interface_status(interface) != InterfaceStatus.DISCONNECTED:
                 logger.error(f"Interface {interface} is not in 'disconnected' state, cannot proceed to set DHCP")
                 raise OSError(f"Interface {interface} is not 'disconnected' after deleting all NetworkManager connections")
-        # Create new DHCP connection
+        # Create a new DHCP connection
         self.run_command(['nmcli', 'connection', 'add', 'type', 'ethernet', 'ifname', interface, 'con-name', f'{interface}-worker-dhcp', 'ipv4.method', 'auto', 'ipv6.method', 'disable'])
         self.run_command(['nmcli', 'connection', 'up', f'{interface}-worker-dhcp'])
         self.eth_ipv4 = self._wait_for_eth_dhcp_ip()

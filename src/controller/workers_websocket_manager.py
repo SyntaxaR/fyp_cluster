@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from typing import Callable, Any, Coroutine
+
 import websockets
 from websockets.asyncio.client import connect, ClientConnection
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -9,17 +11,17 @@ import json
 logger = logging.getLogger(__name__)
 
 class WorkersWebSocketManager:
-    def __init__(self, config: dict[str, any]):
+    def __init__(self, config: dict[str, Any]):
         self.config = config
         self.connections: dict[int, ClientConnection] = {}
         self.connection_tasks: dict[int, asyncio.Task] = {}
-        self.worker_status_change_callbacks: list[callable] = []
+        self.worker_status_change_callbacks: list[Callable[[int, WorkerStatus], Coroutine[Any, Any, Any]]] = []
 
         self.ws_port = self.config['worker']['control_port']
 
         # In seconds
         self.reconnect_interval = 5.0
-        self.max_reconnect_attempts = 5 # maximum number of reconnection attempts before marking worker as disconnected
+        self.max_reconnect_attempts = 5 # maximum number of reconnection attempts before marking a worker as disconnected
         self.connection_timeout = 5.0
 
     async def connect_to_worker(self, worker: WorkerControlInfo) -> bool:
@@ -49,19 +51,20 @@ class WorkersWebSocketManager:
             logger.warning(f"WebSocket connection to {worker} lost!")
         finally:
             await self._handle_disconnection(worker)
-    
-    async def _handle_disconnection(self, worker: WorkerControlInfo, reconnect: bool = True):
+
+    async def _handle_disconnection(self, worker: WorkerControlInfo | int, reconnect: bool = True):
         await self._notify_status_change(worker, WorkerStatus.INACTIVE)
-        if worker.worker_id in self.connections:
+        worker_id = worker.worker_id if isinstance(worker, WorkerControlInfo) else worker
+        if worker_id in self.connections:
             try:
-                await self.connections[worker.worker_id].close()
+                await self.connections[worker_id].close()
             except Exception as e:
                 logger.error(f"Error closing WebSocket connection to {worker}: {e}")
-            del self.connections[worker.worker_id]
+            del self.connections[worker_id]
 
-        if worker.worker_id in self.connection_tasks:
-            self.connection_tasks[worker.worker_id].cancel()
-            del self.connection_tasks[worker.worker_id]
+        if worker_id in self.connection_tasks:
+            self.connection_tasks[worker_id].cancel()
+            del self.connection_tasks[worker_id]
 
         if not reconnect:
             await self._notify_status_change(worker, WorkerStatus.INACTIVE)
@@ -90,14 +93,17 @@ class WorkersWebSocketManager:
         logger.error(f"Failed to reconnect to {worker} after {self.max_reconnect_attempts} attempts (max reached)")
         await self._notify_status_change(worker, WorkerStatus.INACTIVE)
     
-    async def _notify_status_change(self, worker: WorkerControlInfo, status: WorkerStatus):
+    async def _notify_status_change(self, worker: WorkerControlInfo | int, status: WorkerStatus):
+        worker_id = worker.worker_id if isinstance(worker, WorkerControlInfo) else worker
         for callback in self.worker_status_change_callbacks:
             try:
-                await callback(worker.worker_id, status)
+                await callback(worker_id, status)
             except Exception as e:
                 logger.error(f"Error in worker status change callback for {worker}: {e}")
         
-    async def send_command(self, worker: WorkerControlInfo, command: str, data: dict[str, any]={}) -> bool:
+    async def send_command(self, worker: WorkerControlInfo, command: str, data: dict[str, Any]=None) -> bool:
+        if data is None:
+            data = {}
         if worker.worker_id not in self.connections:
             logger.error(f"No active WebSocket connection to {worker} for sending command")
             return False
@@ -131,7 +137,7 @@ class WorkersWebSocketManager:
             await self.disconnect_worker(worker_id)
         logger.info("Disconnected all WebSocket connections to workers")
 
-    def register_status_change_callback(self, callback: callable):
+    def register_status_change_callback(self, callback: Callable[[int, WorkerStatus], Coroutine[Any, Any, Any]]):
         # Callback signature: async def callback(worker: int, status: WorkerStatus)
         self.worker_status_change_callbacks.append(callback)
     

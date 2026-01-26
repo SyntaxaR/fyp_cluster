@@ -1,6 +1,10 @@
 from enum import Enum, unique
 from pydantic import BaseModel
+import numpy as np
+
 from common.util import generate_identifier
+from typing import Literal, Optional, Any
+from dataclasses import dataclass
 
 class ResponseStatus(Enum):
     SUCCESS = "success"
@@ -88,3 +92,59 @@ class ConnectivityTestResponse(BaseModel):
     from_identifier: str
     message: str
     plane: ConnectionType
+
+"""
+Raw Item Schema for Worker Inference
+Tensor mode: Controller sends a list of tensors to the worker
+Raw Item mode: Controller sends a list of raw items to the worker
+Dummy mode: Worker generates random data for inference
+"""
+
+# Tensor mode payload
+@dataclass
+class TensorPayload:
+    dtype: str          # e.g. "float32" "int64"...
+    shape: list[int]    # e.g. [1, 416, 416, 3]
+    data: bytes         # np.ndarray raw bytes
+
+def ndarray_to_payload(arr: np.ndarray) -> TensorPayload:
+    if not arr.flags["C_CONTIGUOUS"]:
+        arr = np.ascontiguousarray(arr)
+    return TensorPayload(dtype=str(arr.dtype), shape=list(arr.shape), data=arr.tobytes())
+
+
+def payload_to_ndarray(p: TensorPayload) -> np.ndarray:
+    arr = np.frombuffer(p.data, dtype=np.dtype(p.dtype))
+    return arr.reshape(p.shape)
+
+
+def tensorfeed_to_payloads(feed: dict[str, np.ndarray]) -> dict[str, TensorPayload]:
+    return {k: ndarray_to_payload(v) for k, v in feed.items()}
+
+
+def payloads_to_tensorfeed(payloads: dict[str, TensorPayload]) -> dict[str, np.ndarray]:
+    return {k: payload_to_ndarray(v) for k, v in payloads.items()}
+
+# Raw Item mode schema
+RawItemType = Literal["image_bytes", "image_path", "text"]
+
+@dataclass
+class RawItem:
+    type: RawItemType
+    data: Any
+    mime: Optional[str] = None
+
+@dataclass
+class InferenceRequest:
+    model: str
+    mode: Literal["tensor", "raw", "dummy"]
+    # Tensor mode
+    inputs: Optional[dict[str, TensorPayload]] = None
+    # Raw Item mode
+    items: Optional[list[RawItem]] = None
+    # Random mode
+    dummy_batch_size: Optional[int] = None
+    dummy_seed: Optional[int] = None
+
+    run_postprocess: bool = True
+    meta: Optional[dict[str, Any]] = None

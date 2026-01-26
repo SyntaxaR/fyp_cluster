@@ -1,3 +1,4 @@
+from typing import Any
 from common.network import NetworkManager
 from common.model import InterfaceStatus
 import logging
@@ -9,7 +10,7 @@ import threading
 logger = logging.getLogger(__name__)
 
 class ControllerNetworkManager(NetworkManager):
-    def __init__(self, config: dict[str, any]):
+    def __init__(self, config: dict[str, Any]):
         super().__init__()
         self.config = config
 
@@ -78,7 +79,7 @@ class ControllerNetworkManager(NetworkManager):
                 logger.error("Ethernet interface failed to connect after multiple attempts. Worker initialization failed, aborting...")
                 raise ConnectionError("Ethernet interface connection failed")   
         
-        # Get ready to setup DHCP server on ethernet interface
+        # Get ready to set up DHCP server on ethernet interface
         # Set ethernet interface to static IP
         self._configure_ethernet_static_ip()
         
@@ -129,7 +130,8 @@ class ControllerNetworkManager(NetworkManager):
         logger.info(f"DNSMASQ service started successfully, pid: {self.dnsmasq_process.pid}")
         self._monitor_process(self.dnsmasq_process, "dnsmasq")
 
-    def _monitor_process(self, process: subprocess.Popen, name: str):
+    @staticmethod
+    def _monitor_process(process: subprocess.Popen, name: str):
         def read_output(pipe, prefix):
             try:
                 for line in iter(pipe.readline, ''):
@@ -169,7 +171,7 @@ class ControllerNetworkManager(NetworkManager):
             if check_status != InterfaceStatus.DISCONNECTED:
                 logger.error(f"Interface {self.ethernet_interface} is not in 'disconnected' ({check_status} instead) state, cannot proceed to set DHCP")
                 raise OSError(f"Interface {self.ethernet_interface} is not 'disconnected' ({check_status} instead) after deleting all NetworkManager connections")
-        # Create new static IP connection
+        # Create a new static IP connection
         self.run_command(['nmcli', 'connection', 'add', 'type', 'ethernet', 'ifname', self.ethernet_interface, 'con-name', f'{self.ethernet_interface}-controller-static', 'ipv4.method', 'manual', 'ipv4.addresses', f'{self.eth_ipv4}/24', 'ipv4.gateway', "", 'ipv4.dns', "", 'ipv6.method', 'disable'])
         self.run_command(['nmcli', 'connection', 'up', f'{self.ethernet_interface}-controller-static'])
     
@@ -189,7 +191,7 @@ class ControllerNetworkManager(NetworkManager):
         #         logger.error(f"Interface {self.wifi_interface} is not in 'disconnected' state, cannot proceed to set DHCP")
         #         raise OSError(f"Interface {self.wifi_interface} is not 'disconnected' after deleting all NetworkManager connections")
         
-        # Disable NetworkManager control over wifi interface
+        # Disable NetworkManager control over Wi-Fi interface
         nm_conf_dir = Path('/etc/NetworkManager/conf.d')
         if not nm_conf_dir.exists():
             raise FileNotFoundError(f"NetworkManager configuration directory not found: {nm_conf_dir}! The system network may not be managed by NetworkManager and thus incompatible!")
@@ -203,14 +205,14 @@ class ControllerNetworkManager(NetworkManager):
         self.run_command(['sudo', 'systemctl', 'restart', 'NetworkManager'])
         sleep(1)
 
-        # Set static IP for wifi interface
+        # Set static IP for Wi-Fi interface
         logger.info(f"Setting static IP {self.wifi_ipv4} for wifi interface {self.wifi_interface}...")
         self.run_command(['ip', 'addr', 'flush', 'dev', self.wifi_interface])
         self.run_command(['sudo', 'ip', 'addr', 'add', f'{self.wifi_ipv4}/24', 'dev', self.wifi_interface])
         self.run_command(['sudo', 'ip', 'link', 'set', self.wifi_interface, 'up'])
         sleep(1)
 
-        # Use hostapd to create wifi AP
+        # Use hostapd to create Wi-Fi AP
         logger.info(f"Setting up Hostapd to create wifi AP on interface {self.wifi_interface}...")
         self.hostapd_conf_file.write_text(self._generate_hostapd_config())
         logger.info("Starting Hostapd service for wifi AP...")
