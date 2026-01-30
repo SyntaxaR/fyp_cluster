@@ -38,3 +38,14 @@ ADJECTIVES = [
     "Royal", "Sharp", "Smart", "Snowy", "Solid", "Spry", "Stark", "Stout",
     "Sturdy", "Sunny", "Super", "Tidy", "Tiny", "Vivid", "Witty", "Zesty"
 ]
+
+# load_adapter function used by the inference engine
+def load_adapter(adapter_path: str):
+    spec = importlib.util.spec_from_file_location("user_adapter", adapter_path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Cannot load adapter from {adapter_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, "ModelAdapter"):
+        raise ValueError("Adapter file must define a `ModelAdapter` class")
+    return module.ModelAdapter()

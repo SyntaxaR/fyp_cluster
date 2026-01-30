@@ -5,6 +5,7 @@ import logging
 from typing import Optional, Any
 
 from common.model import RawItem, InferenceRequest, payloads_to_tensorfeed
+from common.util import load_adapter
 from worker.inference.inference_engine import InferenceModelEngine
 import onnxruntime as ort
 import numpy as np
@@ -25,22 +26,12 @@ class OnnxEngine(InferenceModelEngine):
         self.output_names = [o.name for o in self.outputs]
 
         self._validated_signature: Optional[dict[str, tuple[str, int]]] = None # name -> (dtype_str, ndim)
-        self.adapter = self._load_adapter(adapter_path) if adapter_path else None
+        self.adapter = load_adapter(adapter_path) if adapter_path else None
 
         logger.info(f"Loaded ONNX model. inputs={self.input_names} outputs={self.output_names}")
         if self.adapter:
             logger.info("Loaded user ModelAdapter: %s", type(self.adapter).__name__)
 
-    @staticmethod
-    def _load_adapter(adapter_path: str):
-        spec = importlib.util.spec_from_file_location("user_adapter", adapter_path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"Cannot load adapter from {adapter_path}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        if not hasattr(module, "ModelAdapter"):
-            raise ValueError("Adapter file must define a `ModelAdapter` class")
-        return module.ModelAdapter()
 
     # Core inference
     def infer_tensors(self, input_data: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -110,10 +101,12 @@ class OnnxEngine(InferenceModelEngine):
             meta = {**meta, "items": req.items}
             outputs = self.infer_raw_items(req.items, meta=meta)
 
-        elif req.mode == "random":
+        elif req.mode == "dummy":
             if self.adapter is None:
                 raise ValueError("Random mode requires a custom ModelAdapter!")
-            outputs = self.infer_dummy_inputs(req.dummy_batch_size, seed=req.dummy_seed)
+            dummy_batch_size = req.dummy_batch_size or 10
+            dummy_seed = req.dummy_seed or 42
+            outputs = self.infer_dummy_inputs(batch_size=dummy_batch_size, seed=dummy_seed)
 
         else:
             raise ValueError(f"Unsupported inference mode: {req.mode}")

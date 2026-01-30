@@ -100,13 +100,6 @@ class ModelAdapter:
         return {"input_1:0": batch}
 
     @staticmethod
-    def _get_anchors(anchors_path: str) -> np.ndarray:
-        with open(anchors_path) as f:
-            anchors = f.readline()
-        anchors = np.array(anchors.split(','), dtype=np.float32)
-        return anchors.reshape(3, 3, 2)
-
-    @staticmethod
     def _postprocess_bbbox(pred_bbox: list[np.ndarray], ANCHORS, STRIDES, XYSCALE):
         for i, pred in enumerate(pred_bbox):
             conv_shape = pred.shape
@@ -337,7 +330,8 @@ class ModelAdapter:
 
         return results
 
-
-
+    # Generate random input data for the custom model
     def generate_dummy_inputs(self, batch_size: int = 1, seed: int = 42) -> dict[str, np.ndarray]:
-        raise NotImplementedError
+        rng = np.random.default_rng(seed)
+        x = rng.random((batch_size, self.input_size, self.input_size, 3), dtype=np.float32)
+        return {"input_1:0": x}

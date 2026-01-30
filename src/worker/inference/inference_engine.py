@@ -10,7 +10,7 @@ from common.model import InferenceRequest
 
 class InferenceModelEngine(ABC):
     @abstractmethod
-    def __init__(self, model_path):
+    def __init__(self, model_path, adapter_path):
         pass
 
     @abstractmethod
