@@ -1,0 +1,52 @@
+# FYP Cluster Controller — systemd unit file
+#
+# Install:
+#     sudo cp scripts/fyp-controller.service /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable fyp-controller
+#     sudo systemctl start  fyp-controller
+#
+# Tail logs:
+#     journalctl -u fyp-controller -f
+#
+# Notes:
+#  * Runs as root so the script's internal sudo branch is skipped (the script
+#    detects ``id -u == 0`` and exec's ``uv run python ...`` directly).
+#  * PATH must include wherever uv is installed. The default below covers the
+#    typical user-local install at ~/.local/bin; adjust if you put uv
+#    somewhere else (e.g. /usr/local/bin or /opt/uv/bin).
+#  * Edit WorkingDirectory + ExecStart paths if your checkout isn't at
+#    /home/pi/fyp_cluster/latest .
+[Unit]
+Description=FYP Cluster Controller
+Documentation=https://github.com/SyntaxaR/fyp_cluster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xiaxi
+
+WorkingDirectory=/home/xiaxi/Desktop/fyp_demo
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/xiaxi/.local/bin
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/xiaxi/Desktop/fyp_demo/controller.sh
+ExecStop=/bin/kill -SIGTERM $MAINPID
+
+# Crash recovery
+Restart=on-failure
+RestartSec=5
+
+# Capture python stdout/stderr into the journal so `journalctl -u
+# fyp-controller -f` shows the same thing the foreground run would.
+StandardOutput=journal
+StandardError=journal
+
+# Don't kill child processes (dnsmasq / hostapd) on stop — controller.shutdown
+# already cleans them up via Popen.terminate.
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

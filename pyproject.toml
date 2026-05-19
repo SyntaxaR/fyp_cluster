@@ -1,0 +1,58 @@
+[project]
+name = "fyp-cluster"
+version = "1.0.0"
+description = "Raspberry Pi AI Cluster - Final Year Project"
+authors = [
+    {name = "SyntaxaR", email = "83219306+SyntaxaR@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # Core web stack
+    "fastapi>=0.121.2,<0.122.0",
+    "uvicorn[standard]>=0.38.0,<0.39.0",
+    "websockets>=15.0.1,<16.0.0",
+    "requests>=2.32.5,<3.0.0",
+    "pydantic>=2.12.5,<3.0.0",
+    "python-multipart>=0.0.20",
+    # Web UI
+    "nicegui>=2.10.0",
+    # Numerics & vision.
+    # NOTE: numpy is pinned to <2 because hailort==4.20.0 (the Hailo
+    # Python runtime wheel under res/wheels-hailo/) declares numpy<2 in
+    # its metadata. Bumping numpy past 2.0 makes uv pip install fail with
+    # "all versions of hailort depend on numpy<2".
+    #
+    # opencv-python 4.10+ is also built against numpy 2.x ABI, so it
+    # transitively forces numpy>=2 at runtime — same conflict. Pin to
+    # 4.9.x (the last release line built against numpy 1.x ABI). The
+    # codebase only uses cv2.imread/imdecode/imencode/resize/cvtColor/
+    # imshow/VideoCapture/VideoWriter — all stable across the 4.x line.
+    "numpy>=1.24,<2",
+    "opencv-python>=4.9.0.80,<4.10",
+    "pillow>=10.0,<12",
+    # ONNX (CPU fallback engine)
+    "onnxruntime>=1.23.2",
+    # I2C / power monitoring
+    "smbus2>=0.4.3",
+    # SSH-based auto-onboard of new Pi workers (controller-side only)
+    "paramiko>=3.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.8",
+    "scipy>=1.15.3",
+    "pytest>=8.3.0",
+]
+
+# NOTE: hailo-platform is provided by the system-wide `hailo-all` apt
+# package (installed via dkms). It is NOT installed via pip / uv.
+# The HailoEngine import is guarded; ONNX engine remains the default.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shared", "controller", "worker"]

@@ -1,0 +1,169 @@
+# =============================================================================
+# FYP Cluster Configuration
+# =============================================================================
+# This file is loaded by both controller and worker at startup. Workers
+# additionally fetch a remote copy via /api/get_config after DHCP succeeds, so
+# the source-of-truth for runtime behaviour is the controller's copy.
+# =============================================================================
+
+[project]
+name = "fyp_cluster"
+version = "1.0.0"
+
+# -----------------------------------------------------------------------------
+# Controller-side settings
+# -----------------------------------------------------------------------------
+[controller]
+# wifi_mode controls how the controller drives wlan0:
+#   "ap"     — controller hosts a hostapd 802.11ac access point (default).
+#              Workers / users connect to wifi_ssid for the data plane.
+#   "client" — controller joins an *existing* WiFi network via nmcli using
+#              wifi_client_ssid / wifi_client_password (see [network]).
+#              Workers can then join the same SSID for a wireless data plane,
+#              or stay on Ethernet.
+#   "off"    — wlan0 is left untouched.
+# Legacy: ap_enabled = true|false is honoured when wifi_mode is missing.
+wifi_mode        = "ap"
+ap_enabled       = true     # legacy alias (true => "ap", false => "off")
+control_port     = 8001     # FastAPI control plane (REST + WebSocket)
+data_port        = 8002     # FastAPI data plane (model files, inference)
+web_port         = 8080     # NiceGUI Web UI port
+ethernet_interface = "eth0"
+wifi_interface   = "wlan0"
+log_file         = "controller.log"
+log_level        = "INFO"
+
+# -----------------------------------------------------------------------------
+# Worker-side settings
+# -----------------------------------------------------------------------------
+[worker]
+control_port       = 8001
+data_port          = 8002
+control_interface  = "eth0"
+ethernet_interface = "eth0"
+wifi_interface     = "wlan0"
+log_file           = "worker.log"
+log_level          = "INFO"
+heartbeat_interval = 5      # seconds
+inference_engine   = "auto" # "auto" | "onnx" | "hailo"
+
+# -----------------------------------------------------------------------------
+# Network plane addressing
+# -----------------------------------------------------------------------------
+[network]
+# Controller's own IP is always {subnet}1 with /24
+ethernet_subnet = "192.168.10."
+wifi_subnet     = "192.168.20."
+# AP-mode only: SSID/password the controller broadcasts.
+# Empty `wifi_password` => open AP (no WPA). The cluster runs on a
+# private switch with no internet uplink so the security tradeoff is
+# fine, and it dodges the bookworm nmcli psk-flags rabbit hole.
+wifi_ssid       = "FYPClusterAP"
+wifi_password   = ""
+# Client-mode only: SSID/password the controller will join via nmcli.
+wifi_client_ssid     = ""
+wifi_client_password = ""
+dhcp_range_start = 5
+dhcp_range_end   = 254
+# Lease time given to DHCP clients. Short value (e.g. "5m") means the
+# /tmp/dnsmasq-controller.leases file always reflects who is currently
+# online — clients renew their lease every (lease_time / 2), so cable
+# replugs / reconnects show up within minutes. Combined with
+# `dhcp-authoritative` in the dnsmasq config, any stale request gets
+# NACKed and forces the client into a fresh DHCPDISCOVER. Use a longer
+# value ("24h") if you want stable IPs and don't care about lease-file
+# freshness.
+lease_time = "5m"
+
+# -----------------------------------------------------------------------------
+# Cluster orchestration
+# -----------------------------------------------------------------------------
+[cluster]
+monitor_interval     = 10   # seconds — controller polls worker timestamps
+heartbeat_timeout    = 15   # seconds — declare worker INACTIVE after this
+ws_reconnect_interval = 5   # seconds
+ws_max_reconnect      = 5
+
+# -----------------------------------------------------------------------------
+# Power monitoring (INA226 over I2C on controller)
+# -----------------------------------------------------------------------------
+[power_monitor]
+enabled            = true
+i2c_bus            = 1
+i2c_address_start  = 0x40    # scan range start
+i2c_address_end    = 0x4F    # scan range end (inclusive)
+shunt_resistance   = 0.01    # ohms (10 mOhm)
+actual_vbus        = 5.07    # multimeter-measured rail voltage
+conversion_time    = 4       # 0..7 (4 = 1.1ms)
+averaging          = 5       # 0..7 (5 = 256 samples)
+poll_interval_ms   = 100     # storage cadence for power samples
+
+# -----------------------------------------------------------------------------
+# INA226 ↔ worker auto-calibration
+# -----------------------------------------------------------------------------
+# CalibrationManager scans every detected INA226, samples baseline power, then
+# bursts each ACTIVE worker in turn and binds the worker to whichever chip's
+# power rose the most (above min_delta_w). Bindings persist in SQLite keyed by
+# the worker's CPU serial, so a reboot reuses the previous mapping.
+[calibration]
+baseline_s   = 2.0      # baseline sampling window before any burst
+burst_s      = 4.0      # CPU stress burst per worker
+cool_s       = 1.5      # idle gap between workers (lets chips settle)
+min_delta_w  = 0.3      # min ΔP (W) to consider a chip → worker match
+
+# -----------------------------------------------------------------------------
+# Persistent storage
+# -----------------------------------------------------------------------------
+[database]
+path = "cluster.db"
+
+# -----------------------------------------------------------------------------
+# Dispatcher defaults
+# -----------------------------------------------------------------------------
+[dispatcher]
+# Algorithms: "round_robin" | "weighted_round_robin"
+algorithm = "round_robin"
+# Optional explicit weights for weighted RR. Empty => derive from worker capacity.
+# Example: weights = { 0 = 1, 1 = 2 }
+
+# -----------------------------------------------------------------------------
+# Auto-onboard (controller-side)
+# -----------------------------------------------------------------------------
+# When enabled, the controller watches the dnsmasq lease file and tries to
+# SSH to every new IP on the ETHERNET subnet using factory-default
+# Raspberry Pi credentials (pi/raspberry). On success it pushes the latest
+# worker payload to `deploy_path`, installs the fyp-worker systemd unit,
+# and starts it — so fresh-flashed Pis joining the switch auto-enroll
+# without any manual setup.
+#
+# Default ON: this project's whole point is plug-and-play deployment, and
+# the cluster runs on a closed switch so default-credential probing is
+# only ever directed at devices the operator owns. To turn off, either
+# flip `enabled = false` here or pass `--no-auto-onboard` on the CLI.
+[auto_onboard]
+enabled              = true
+ssh_port             = 22
+ssh_user             = "pi"
+ssh_password         = "raspberry"
+deploy_path          = "/home/pi/fyp_cluster/latest"
+poll_interval_s      = 10
+ssh_timeout_s        = 3
+install_systemd_unit = true
+
+# -----------------------------------------------------------------------------
+# Mock / local-debug mode
+# -----------------------------------------------------------------------------
+# When enabled, controller skips dnsmasq/hostapd, worker skips nmcli, and
+# INA226 reads are replaced by a synthetic power generator. This lets you run
+# 1 controller + N workers on the same laptop for end-to-end debugging.
+# Override at runtime with env var FYP_MOCK=1.
+[mock]
+enabled = false
+# Controller host that workers should target when mock is on (env override:
+# FYP_CONTROLLER_HOST). Defaults to localhost.
+controller_host = "127.0.0.1"
+# Synthetic chip count for the mock power monitor.
+power_chip_count = 4
+# Per-chip baseline power in watts; sinusoidal load + noise added on top.
+power_baseline_w = 3.0
+power_load_w     = 2.5

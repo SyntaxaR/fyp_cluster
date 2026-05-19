@@ -1,0 +1,32 @@
+# Runtime upload landing zones — anything that lands here came from a
+# Web UI upload or auto-onboard at demo time. Source files live under
+# demo/ instead and ARE committed.
+adapters/
+models/
+datasets/
+dispatchers/
+recordings/
+
+# Worker-side caches (only show up if running mock cluster on this host)
+worker_models/
+worker_adapters/
+
+# Wheel cache — operator stages with scripts/prepare-wheels.sh, NOT in git
+res/wheels/
+res/wheels-hailo/
+res/bin/uv
+
+# Local databases / logs
+cluster.db
+cluster.db-shm
+cluster.db-wal
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.wheels/
+
+# uv
+uv.lock
